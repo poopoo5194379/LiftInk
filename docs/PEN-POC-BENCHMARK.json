@@ -1,0 +1,50 @@
+{
+  "date": "2026-11-02T02:52:41.768Z",
+  "window": "1440x900",
+  "electron": "44.10.1",
+  "chromium": "152.0.7977.169",
+  "devicePixelRatio": 1.75,
+  "canvasSize": {
+    "width": 922.5714721679688,
+    "height": 681.5714721679688
+  },
+  "methodology": "20 alternating wheel-pan redraws per case, Canvas 2D JS submission time; synthetic strokes, no physical pen",
+  "results": [
+    {
+      "renderer": "segments",
+      "strokes": 1000,
+      "points": 20000,
+      "coldMs": 4.5,
+      "medianMs": 2.7,
+      "p95Ms": 3.7,
+      "maxMs": 6.4
+    },
+    {
+      "renderer": "segments",
+      "strokes": 5000,
+      "points": 100000,
+      "coldMs": 26.8,
+      "medianMs": 16.3,
+      "p95Ms": 18,
+      "maxMs": 19.6
+    },
+    {
+      "renderer": "freehand",
+      "strokes": 1000,
+      "points": 20000,
+      "coldMs": 16.2,
+      "medianMs": 1.2,
+      "p95Ms": 1.9,
+      "maxMs": 1.9
+    },
+    {
+      "renderer": "freehand",
+      "strokes": 5000,
+      "points": 100000,
+      "coldMs": 47.4,
+      "medianMs": 4.8,
+      "p95Ms": 5.5,
+      "maxMs": 5.6
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+.app-shell {
+  color: var(--ink-text);
+  background: var(--ink-shell-surface);
+}
+.mountain-backdrop {
+  height: 218px;
+  opacity: 0.47;
+}
+.navigation {
+  background: #f7f6fbd9;
+}
+.glass {
+  background: var(--ink-glass-surface);
+  border-color: var(--ink-glass-border);
+  box-shadow: var(--ink-glass-shadow);
+  backdrop-filter: blur(14px) saturate(115%);
+}
+.middle-column {
+  border-color: #ffffffdc;
+}
+.new-note {
+  background: var(--ink-cta-surface);
+  box-shadow: 0 6px 15px #5140ab29;
+}
+.new-note small {
+  color: #eeeafb;
+}
+.quick-button {
+  background: #ffffff9c;
+  border-color: #ffffffd8;
+  box-shadow: 0 2px 8px #58567e0a;
+}
+.quick-button svg {
+  color: var(--ink-secondary);
+}
+.quick-button:hover,
+.note-card:hover .thumb {
+  border-color: #c6c0ed;
+  background-color: #ffffffed;
+}
+.recent,
+.stats,
+.keywords {
+  border-radius: var(--ink-radius-panel);
+}
+.panel-title button,
+.panel-title small,
+.note-card > span,
+.stat-values span,
+.chart-labels {
+  color: var(--ink-secondary);
+}
+.nav-item.active,
+.folder-item.selected {
+  background: var(--ink-accent-soft);
+}
+.brand svg,
+.stat-values svg {
+  color: var(--ink-accent);
+}
+.thumb {
+  box-shadow: 0 3px 9px #55557f17;
+}
+.bubble-field button {
+  box-shadow: 0 3px 9px #8176ad1b;
+}
+.bubble-field button:first-child {
+  background: radial-gradient(circle at 40% 25%, #e7dff9, #bca9ed);
+}
+.goals {
+  border-top-color: var(--ink-line);
+}
+.notification-dot {
+  box-shadow: 0 0 0 2px #f7f6fb;
+}
+.nav-item {
+  gap: 12px;
+  min-height: 44px;
+}
+.nav-item > svg {
+  width: 20px;
+  height: 20px;
+}
+.folder-heading {
+  position: relative;
+  padding-left: 16px;
+}
+.folder-heading svg:first-child {
+  position: absolute;
+  left: -2px;
+  width: 14px;
+  height: 14px;
+}
+.folder-heading svg:nth-child(2) {
+  width: 20px;
+  height: 20px;
+}
+.folder-item {
+  height: 36px;
+  gap: 8px;
+}
+.agenda-item {
+  gap: 8px;
+}
+.quick-button {
+  gap: 8px;
+}
+.quick-button svg {
+  width: 22px;
+  height: 22px;
+}
+.new-note {
+  gap: 12px;
+}
+.stat-values svg {
+  width: 24px;
+  height: 24px;
+}
+.bubble-field button:not(:first-child) {
+  font-size: clamp(15px, 1.15vw, 18px) !important;
+}

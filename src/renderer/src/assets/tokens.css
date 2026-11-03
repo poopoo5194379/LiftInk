@@ -1,0 +1,25 @@
+:root {
+  --ink-accent: #6856d4;
+  --ink-accent-soft: #ece9fb;
+  --ink-text: #282b3e;
+  --ink-secondary: #575f75;
+  --ink-muted: #687087;
+  --ink-line: #dcddec;
+  --ink-glass-border: #ffffffd6;
+  --ink-glass-surface: #ffffffc4;
+  --ink-glass-shadow: 0 4px 15px #58567e12;
+  --ink-shell-surface: linear-gradient(180deg, #f7f6fd, #ececf9);
+  --ink-cta-surface: #6856d4;
+  --ink-radius-panel: 18px;
+  --type-xs: 12px;
+  --type-sm: 13px;
+  --type-body: 14px;
+  --type-section: 16px;
+  --type-page: 22px;
+  --type-number: 24px;
+  --line-xs: 18px;
+  --line-sm: 20px;
+  --line-body: 22px;
+  --line-section: 24px;
+  --line-page: 30px;
+}

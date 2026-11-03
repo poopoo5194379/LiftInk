@@ -1,0 +1,172 @@
+@font-face {
+  font-family: 'LiftInk Han';
+  src: url('/fonts/SourceHanSansCN-VF.ttf.woff2') format('woff2');
+  font-weight: 250 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  font-family:
+    'LiftInk Han', 'Segoe UI Variable', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', sans-serif;
+  color: var(--ink-text);
+}
+
+body {
+  font-size: var(--type-body);
+  line-height: var(--line-body);
+  font-weight: 400;
+  letter-spacing: 0;
+  font-synthesis: none;
+}
+
+button,
+input {
+  font-family: inherit;
+  letter-spacing: 0;
+}
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+.brand {
+  font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+  font-size: 30px;
+}
+.brand strong {
+  font-weight: 600;
+}
+.brand-header em {
+  font-size: var(--type-section);
+  line-height: var(--line-section);
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: 0;
+  color: var(--ink-secondary);
+}
+.slogan-cn {
+  font-size: var(--type-section);
+  line-height: var(--line-section);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.nav-item {
+  font-size: var(--type-body);
+  line-height: var(--line-body);
+  font-weight: 400;
+}
+.nav-item.active,
+.folder-heading,
+.folder-item.selected {
+  font-weight: 500;
+}
+.folder-item {
+  font-size: var(--type-body);
+  line-height: var(--line-body);
+  font-weight: 400;
+}
+.calendar-head strong {
+  font-size: 18px;
+  line-height: var(--line-section);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.calendar-grid {
+  font-size: var(--type-sm);
+}
+.weekday {
+  font-weight: 600;
+}
+.calendar-grid button {
+  font-size: var(--type-sm);
+  font-weight: 400;
+}
+.count {
+  font-size: var(--type-body);
+}
+.section-title h2,
+.panel-title h2 {
+  font-size: var(--type-section);
+  line-height: var(--line-section);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.agenda-item {
+  font-size: var(--type-body);
+  line-height: var(--line-body);
+}
+.agenda-item b {
+  font-weight: 400;
+}
+.goal {
+  font-size: var(--type-body);
+  line-height: var(--line-body);
+  font-weight: 400;
+}
+.empty-day {
+  font-size: var(--type-body);
+}
+.search-box input {
+  font-size: var(--type-body);
+  line-height: var(--line-body);
+}
+.search-box kbd {
+  font-size: var(--type-xs);
+  line-height: var(--line-xs);
+}
+.new-note strong {
+  font-size: var(--type-section);
+  line-height: var(--line-section);
+  font-weight: 600;
+}
+.new-note small {
+  font-size: var(--type-sm);
+  line-height: var(--line-sm);
+  font-weight: 400;
+}
+.quick-button b {
+  font-size: var(--type-body);
+  line-height: var(--line-sm);
+  font-weight: 500;
+}
+.note-card strong {
+  font-size: var(--type-body);
+  line-height: var(--line-body);
+  font-weight: 500;
+}
+.note-card > span,
+.panel-title button,
+.panel-title small,
+.stat-values span,
+.chart-labels {
+  font-size: var(--type-sm);
+  line-height: var(--line-sm);
+  font-weight: 400;
+}
+.stat-values strong {
+  font-size: var(--type-number);
+  line-height: var(--line-page);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stat-values strong small {
+  font-size: var(--type-xs);
+  font-weight: 400;
+}
+.agenda-item span,
+.chart-labels {
+  font-variant-numeric: tabular-nums;
+}
+.bubble-field button {
+  font-weight: 600;
+}
+.dialog-content p {
+  line-height: var(--line-body);
+}
+@media (max-width: 1500px) {
+  .brand {
+    font-size: 26px;
+  }
+}

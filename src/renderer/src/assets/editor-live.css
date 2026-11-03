@@ -1,0 +1,147 @@
+.editor-file-input {
+  display: none;
+}
+.editor-ink-swatch {
+  width: 19px;
+  height: 19px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px #d4cfdf;
+}
+.editor-toolbox button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.editor-live-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+.editor-live-canvas.tool-hand {
+  cursor: grab;
+}
+.editor-live-canvas.tool-select {
+  cursor: default;
+}
+.editor-live-canvas.tool-eraser {
+  cursor: cell;
+}
+.editor-selection rect[data-handle] {
+  cursor: nwse-resize;
+}
+.editor-capture-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #1c1932ba;
+}
+.editor-capture-dialog {
+  display: flex;
+  flex-direction: column;
+  max-width: min(1200px, 96vw);
+  max-height: 94vh;
+  overflow: hidden;
+  border: 1px solid #e5def2;
+  border-radius: 16px;
+  background: #faf9fd;
+  box-shadow: 0 24px 70px #1d173760;
+}
+.editor-capture-dialog header,
+.editor-capture-dialog footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+}
+.editor-capture-dialog header {
+  justify-content: space-between;
+}
+.editor-capture-dialog header div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.editor-capture-dialog header strong {
+  font-size: 15px;
+  font-weight: 600;
+}
+.editor-capture-dialog header small,
+.editor-capture-dialog footer span {
+  color: #6d6c7d;
+  font-size: 12px;
+}
+.editor-capture-dialog footer {
+  justify-content: flex-end;
+}
+.editor-capture-dialog footer span {
+  margin-right: auto;
+}
+.editor-capture-dialog button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border: 1px solid #e0dbe9;
+  border-radius: 8px;
+  background: #fff;
+  color: #403c57;
+  font-size: 13px;
+}
+.editor-capture-dialog button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.editor-capture-dialog button.primary {
+  background: #7059c6;
+  border-color: #7059c6;
+  color: white;
+}
+.editor-capture-image {
+  position: relative;
+  display: inline-block;
+  align-self: center;
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  cursor: crosshair;
+  touch-action: none;
+}
+.editor-capture-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 65vh;
+  user-select: none;
+}
+.editor-capture-selection {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #eee7ff;
+  background: #7966bd24;
+  box-shadow: 0 0 0 1px #6d59b5;
+  pointer-events: none;
+}
+.editor-storage-warning {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 9px 22px;
+  color: #7b435b;
+  background: #fff3f6;
+  border-bottom: 1px solid #ecd2dd;
+  font-size: 12px;
+}
+.editor-storage-warning button {
+  border: 1px solid #bd7695;
+  border-radius: 8px;
+  padding: 4px 9px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+}
