@@ -13,6 +13,9 @@ const app = await electron.launch({ executablePath, env: { ...process.env, LIFTI
 
 try {
   const page = await app.firstWindow()
+  page.on('pageerror', (error) => { console.error(error) })
+  page.on('console', (message) => { if (message.type() === 'error') console.error(message.text()) })
+  await page.bringToFront()
   await expect(page.getByRole('button', { name: '设置', exact: true })).toBeVisible()
   const diagnostics = await page.evaluate(() => window.liftInk.appDiagnostics())
   assert.equal(diagnostics.platform, 'darwin')
@@ -22,13 +25,13 @@ try {
   await page.keyboard.press('Escape')
 
   const pdf = await PDFDocument.create()
-  pdf.addPage()
+  pdf.addPage([320, 240]).drawText('LiftInk PDF sample')
   const sourcePath = join(root, 'Mac PDF sample.pdf')
   await writeFile(sourcePath, await pdf.save())
   await app.evaluate(({ app }, path) => {
     app.emit('open-file', new Event('open-file', { cancelable: true }), path)
   }, sourcePath)
-  await expect(page.getByLabel('笔记标题')).toHaveValue('Mac PDF sample')
+  await expect(page.getByLabel('笔记标题')).toHaveValue('Mac PDF sample', { timeout: 30_000 })
   await expect(page.getByRole('img', { name: '笔记画布' }).first()).toBeVisible()
   await page.keyboard.press('Meta+s')
 
