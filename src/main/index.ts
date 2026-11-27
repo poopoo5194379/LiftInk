@@ -11,6 +11,7 @@ import { NoteStore, replaceAtomic, validDocument, validNoteId, validNoteRecord }
 import { loadNativePdfText, loadPdfOcr, recognizeInk, recognizePdfPage, saveNativePdfText, savePdfOcr } from './pdfOcr'
 import { copyVault, createVault, independentParent, loadVaultSettings, readVault, saveVaultSettings, seedVault, verifyVault } from './vault'
 import type { VaultOperation } from '../shared/vault'
+import { checkReleaseUpdate, downloadRelease } from './releaseUpdates'
 
 const assetIdPattern = /^[a-f0-9]{64}\.(png|jpg|webp)$/
 const mediaIdPattern = /^[a-f0-9]{64}\.(pdf|webm)$/
@@ -475,6 +476,16 @@ if (hasInstanceLock) void app.whenReady().then(async () => {
     version: app.getVersion(), electron: process.versions.electron, chromium: process.versions.chrome,
     platform: process.platform, arch: process.arch, gpu: app.getGPUFeatureStatus().gpu_compositing
   }))
+  ipcMain.handle('liftink:check-release-update', (event) => {
+    if (event.sender !== primaryWindow?.webContents || event.senderFrame !== event.sender.mainFrame ||
+        process.platform !== 'win32' || process.arch !== 'x64') throw new Error('当前平台无法检查 Windows x64 更新')
+    return checkReleaseUpdate(app.getVersion())
+  })
+  ipcMain.handle('liftink:download-release', (event, version: unknown) => {
+    if (event.sender !== primaryWindow?.webContents || event.senderFrame !== event.sender.mainFrame ||
+        process.platform !== 'win32' || process.arch !== 'x64') throw new Error('当前平台无法下载 Windows x64 更新')
+    return downloadRelease(version)
+  })
   ipcMain.handle('liftink:validate-note-record', (_event, note: unknown) => validNoteRecord(note))
   handleVault('liftink:clean-assets', (_event, ids: unknown) => noteStore.cleanAssets(ids))
   handleVault('liftink:sweep-trash', () => noteStore.sweepTrash())

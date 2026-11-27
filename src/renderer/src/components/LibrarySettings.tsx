@@ -5,10 +5,11 @@ import type { VaultOperation } from '../../../shared/vault'
 import { accentColors, type Preferences } from '../editor/preferences'
 import { penStyles } from '../editor/ink'
 import WritingTestPad from './WritingTestPad'
+import VersionUpdates from './VersionUpdates'
 
 export type LocalProfile = { name: string; reminders: boolean }
 
-export type SettingsSection = 'general' | 'appearance' | 'writing' | 'devices' | 'canvas' | 'files' | 'shortcuts' | 'about'
+export type SettingsSection = 'general' | 'appearance' | 'writing' | 'devices' | 'canvas' | 'files' | 'shortcuts' | 'updates' | 'about'
 const sections = [
   ['general', '通用', '启动、语言、默认行为', SlidersHorizontal],
   ['appearance', '外观', '主题、颜色、界面大小', Palette],
@@ -17,6 +18,7 @@ const sections = [
   ['canvas', '画布与笔记', '纸张、页面、导航方式', Notebook],
   ['files', '文件与备份', '存储、自动保存、恢复', FolderSync],
   ['shortcuts', '快捷键', '文件、编辑和书写工具', Keyboard],
+  ['updates', '版本更新', '检查更新、下载安装包', Download],
   ['about', '关于与诊断', '版本、书写问题', Info]
 ] as const
 
@@ -88,7 +90,7 @@ export default function LibrarySettings({ profile, onProfile, folders, onFolder,
   }, [showStorageLocation, lastBackup])
   useEffect(() => {
     let cancelled = false
-    if (section === 'about') void window.liftInk.appDiagnostics().then((value) => { if (!cancelled) setDiagnostics(value) }).catch(() => { if (!cancelled) setMessage('无法获取版本与诊断信息') })
+    if (section === 'about' || section === 'updates') void window.liftInk.appDiagnostics().then((value) => { if (!cancelled) setDiagnostics(value) }).catch(() => { if (!cancelled) setMessage('无法获取版本与诊断信息') })
     return () => { cancelled = true }
   }, [section])
   const chooseBackupDirectory = async (): Promise<void> => {
@@ -262,9 +264,9 @@ export default function LibrarySettings({ profile, onProfile, folders, onFolder,
           return matching.length > 0 && <section key={group}><h3>{group}</h3>{matching.map(([action, key]) => <div key={action} className="preference-row"><span>{action}</span><kbd>{key}</kbd></div>)}</section>
         })}
       </section>}
+      {section === 'updates' && <VersionUpdates diagnostics={diagnostics} />}
       {section === 'about' && <section className="glass library-setting">
         <h2>关于与诊断</h2><p>LiftInk {diagnostics?.version}</p>
-        <details><summary>版本信息</summary><p>本版包括笔记全屏、日程周历和月历、PDF 插入位置及关键词屏蔽。</p></details>
         <h3>报告书写问题</h3><p>可先检查诊断内容，再导出到本机文件。</p>
         <div className="library-setting-actions"><button disabled={!diagnostics} onClick={() => setDiagnosticsOpen(!diagnosticsOpen)}>查看诊断信息</button>
           <button disabled={!diagnosticsOpen} onClick={() => void exportDiagnostics()}>导出诊断信息</button></div>

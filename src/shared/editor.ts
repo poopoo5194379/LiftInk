@@ -75,3 +75,4 @@ export type StoredMedia = { assetId: string; dataUrl: string }
 export type StorageLoad<T> = { value: T | null; recovered: boolean; orphanCount?: number }
 export type StorageInfo = { path: string; bytes: number; backupDirectory: string | null }
 export type AppDiagnostics = { version: string; electron: string; chromium: string; platform: string; arch: string; gpu: string }
+export type ReleaseUpdate = { version: string; available: boolean }

@@ -7,6 +7,7 @@ import type {
   NoteRecord,
   OpenedPdf,
   PdfOcrPage,
+  ReleaseUpdate,
   StorageLoad,
   StorageInfo,
   StoredImage,
@@ -27,6 +28,8 @@ declare global {
       chooseBackupDirectory: () => Promise<string | null>
       writeLibraryBackup: (data: string) => Promise<string>
       appDiagnostics: () => Promise<AppDiagnostics>
+      checkReleaseUpdate: () => Promise<ReleaseUpdate | null>
+      downloadRelease: (version: string) => Promise<void>
       notifyAgenda: (title: string, due: number) => Promise<boolean>
       takeOpenedPdf: () => Promise<OpenedPdf | null>
       onPdfOpenAvailable: (callback: () => void) => () => void

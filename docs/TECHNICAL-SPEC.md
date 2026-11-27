@@ -55,6 +55,7 @@ renderer 只能通过 `window.liftInk` 调用 preload。加载方法实际返回
 | `vaultOperation(operation)` | 打开、创建、迁移、快照或恢复 → 新目录或取消 | 目录由系统选择器提供。复制与验证在主进程完成，[实现](../src/main/vault.ts) |
 | `captureScreen()` | 无 → `CapturedScreen` | 捕获当前指针所在显示器；多屏与权限边界尚需实测 |
 | `pinImage(id)` | 图片资源 ID → `void` | 打开置顶独立窗口；复制/保存/贴回尚未实现 |
+| `checkReleaseUpdate()` / `downloadRelease(version)` | 无 → 版本号和更新标记或空值；数字版本号 → `void` | 主窗口 Windows x64 请求。主进程匿名读取 GitHub Releases，按版本号选出已发布且含对应安装包的最高版本。下载由默认浏览器处理。 |
 
 ## 本地资料库
 
@@ -78,6 +79,6 @@ Obsidian 将资料库放在用户选择的本地文件夹，正文以 Markdown �
 
 - Node/npm：使用与 `package-lock.json` 兼容的 Node 版本；项目尚未固定 `.nvmrc`/`engines`，发布前应固定并在 CI 检查。
 - 开发：`npm ci` → `npm run dev`；验证：`npm run build`、`npm run lint` 和关键 Electron 回归脚本。
-- `LIFTINK_TEST_DATA_DIR` 只用于隔离自动化数据；真实用户不要设置。没有生产 `.env`、密钥或远端 API 配置。
-- 构建：`npm run build:win` 等；打包产物默认放 `dist/`。应用归档只包含构建产物、运行资源、包清单和生产依赖。本地测试、文档及历史打包产物不进入归档。当前应用 ID 保持兼容，未配置在线更新源。
+- `LIFTINK_TEST_DATA_DIR` 只用于隔离自动化数据；真实用户不要设置。版本检查读取公开 GitHub Releases，无需密钥。
+- 构建：`npm run build:win` 等；打包产物默认放 `dist/`。应用归档只包含构建产物、运行资源、包清单和生产依赖。本地测试、文档及历史打包产物不进入归档。当前应用 ID 保持兼容。
 - Windows 沿用 `%APPDATA%/liftink-desktop` 作为 Electron 配置目录，默认库为下一级 `liftink-data/`。迁移后由本机资料库指针定位用户所选目录。测试目录继续由 `LIFTINK_TEST_DATA_DIR` 隔离。

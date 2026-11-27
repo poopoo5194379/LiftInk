@@ -2,7 +2,7 @@
 // only when a later feature requires them.
 import { contextBridge, ipcRenderer } from 'electron'
 import type { VaultOperation, VaultSettings } from '../shared/vault'
-import type { AppDiagnostics, CapturedScreen, NoteDocument, NoteRecord, OpenedPdf, PdfOcrPage, StorageInfo, StoredImage, StoredMedia } from '../shared/editor'
+import type { AppDiagnostics, CapturedScreen, NoteDocument, NoteRecord, OpenedPdf, PdfOcrPage, ReleaseUpdate, StorageInfo, StoredImage, StoredMedia } from '../shared/editor'
 
 let flushEditor: (() => Promise<void>) | undefined
 ipcRenderer.on('liftink:prepare-close', (_event, request: string) => {
@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('liftInk', {
   chooseBackupDirectory: (): Promise<string | null> => ipcRenderer.invoke('liftink:choose-backup-directory'),
   writeLibraryBackup: (data: string): Promise<string> => ipcRenderer.invoke('liftink:write-library-backup', data),
   appDiagnostics: (): Promise<AppDiagnostics> => ipcRenderer.invoke('liftink:app-diagnostics'),
+  checkReleaseUpdate: (): Promise<ReleaseUpdate | null> => ipcRenderer.invoke('liftink:check-release-update'),
+  downloadRelease: (version: string): Promise<void> => ipcRenderer.invoke('liftink:download-release', version),
   notifyAgenda: (title: string, due: number): Promise<boolean> => ipcRenderer.invoke('liftink:notify-agenda', title, due),
   takeOpenedPdf: (): Promise<OpenedPdf | null> => ipcRenderer.invoke('liftink:take-opened-pdf'),
   onPdfOpenAvailable: (callback: () => void): (() => void) => {

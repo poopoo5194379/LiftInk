@@ -40,7 +40,7 @@ try {
   await expect(page.locator('.calendar-grid .agenda-date-dot')).toHaveCount(1)
 
   await button('设置').click()
-  await expect(page.getByRole('navigation', { name: '设置分类' }).getByRole('button')).toHaveCount(8)
+  await expect(page.getByRole('navigation', { name: '设置分类' }).getByRole('button')).toHaveCount(9)
   await page.getByRole('button', { name: /书写体验/ }).click()
   const settings = page.getByRole('region', { name: '设置页面' })
   const scrollbar = await settings.evaluate((element) => {

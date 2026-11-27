@@ -4,6 +4,8 @@
 
 ## 近期改动与验证记录
 
+1.0.1 在设置新增「版本更新」。`check-release-updates.mjs` 在源码运行版和 Windows 解包版通过了新版识别、版本号排序、无可用安装包、请求失败后重试和 GitHub 下载地址校验。配置 `LIFTINK_TEST_RELEASE_VERSION=1.0.1` 可查询公开 Release，复验新版发现和已是最新版两条路径。
+
 11 月 27 日候选版下线录制、播放和转写入口，保留旧笔记的音频附件引用。用 `check-interaction-closures.mjs` 验证旧速记文字、原生备份恢复、笔记计数、思维导图启动恢复和全局搜索。用 `check-note-features.mjs` 验证扫描 OCR 保留到重启后并可复制当前页文字。
 
 橡皮的精确直径和页面大小、缩放下的覆盖范围、锁定图层，以及截图拖入右侧同笔记页面或独立 PDF 笔记，由 `check-eraser-and-dual-transfer.mjs` 回归。用 `check-app-theme.mjs` 验证四种配色在浅色和深色模式下覆盖首页山景、卡片和两个时间筛选，并检查编辑器换色后笔迹和纸张保持原设置。
