@@ -1,0 +1,107 @@
+name: Desktop preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified installers to GitHub Releases
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, target: mac-arm64, arch: arm64 }
+          - { runner: macos-15-intel, target: mac-x64, arch: x64 }
+          - { runner: windows-2025, target: win-x64, arch: x64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --registry=https://registry.npmjs.org --replace-registry-host=registry.npmmirror.com
+      - name: Package and test macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          BUILD_ARCH: ${{ matrix.arch }}
+        run: |
+          npm run build:mac -- "--$BUILD_ARCH"
+          app=(dist/mac*/LiftInk.app)
+          export LIFTINK_TEST_PACKAGED_EXE="${app[0]}/Contents/MacOS/LiftInk"
+          codesign --verify --deep --strict "${app[0]}"
+          expected="$BUILD_ARCH"
+          if [[ "$expected" == x64 ]]; then expected=x86_64; fi
+          test "$(lipo -archs "$LIFTINK_TEST_PACKAGED_EXE")" = "$expected"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleDocumentTypes' "${app[0]}/Contents/Info.plist" | grep -q 'pdf'
+          node scripts/check-macos-preview.mjs
+          node scripts/check-release-updates.mjs
+          hdiutil verify dist/*.dmg
+      - name: Package and test Windows
+        if: runner.os == 'Windows'
+        run: |
+          npm run build:win -- --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:LIFTINK_TEST_PACKAGED_EXE = (Resolve-Path 'dist/win-unpacked/LiftInk.exe').Path
+          node scripts/check-release-updates.mjs
+      - name: Upload installers
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: LiftInk-${{ matrix.target }}
+          path: |
+            dist/*.dmg
+            dist/*-setup.exe
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: Publish preview
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: desktop-preview-release
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: LiftInk-*
+          path: installers
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="v$version"
+          for suffix in mac-arm64.dmg mac-x64.dmg setup.exe; do
+            test -s "installers/LiftInk-$version-$suffix"
+          done
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists. Update the version before publishing."
+            exit 1
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --prerelease \
+            --title "LiftInk $version · 桌面预览版" \
+            --notes 'macOS 13+ 下载与芯片对应的 DMG：Apple 芯片选 arm64，Intel 选 x64。打开 DMG 后将 LiftInk 拖入「应用程序」。Mac 预览版尚未通过 Apple 公证。Windows x64 下载 setup.exe。' \
+            "installers/LiftInk-$version-mac-arm64.dmg" \
+            "installers/LiftInk-$version-mac-x64.dmg" \
+            "installers/LiftInk-$version-setup.exe"

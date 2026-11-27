@@ -16,7 +16,8 @@
 - `main` 保持能构建；未完成的实验放分支或显式实验入口。
 - 不在同一提交混合存储迁移、画布性能与视觉调色。
 - 优先修复 S0/S1 和数据恢复，再加功能。
-- Windows x64 预览版通过公开的 [GitHub Releases](https://github.com/poopoo5194379/LiftInk/releases) 分发。发布时使用与包版本一致的 `vX.Y.Z` 标签，并上传 `LiftInk-X.Y.Z-setup.exe` 后再发布。设置中的版本检查以这个标签和安装包为准。
+- 桌面预览版通过公开的 [GitHub Releases](https://github.com/poopoo5194379/LiftInk/releases) 分发。GitHub Actions 的 `Desktop preview` 在对应架构的系统上构建并验收 Windows x64、macOS arm64 和 macOS x64。更新包版本后，从 `main` 运行工作流并选择发布，三个构建通过后创建对应 `vX.Y.Z` 预览版。
+- macOS 本地构建运行 `npm run build:mac`，或追加 `-- --arm64` 或 `-- --x64` 指定架构。当前预览构建使用临时签名和 macOS 13+ 部署目标。向一般用户分发前需配置 Developer ID 签名和 Apple 公证。
 
 ## 维护记录
 

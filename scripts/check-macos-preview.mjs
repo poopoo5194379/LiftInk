@@ -26,7 +26,7 @@ try {
   const sourcePath = join(root, 'Mac PDF sample.pdf')
   await writeFile(sourcePath, await pdf.save())
   await app.evaluate(({ app }, path) => {
-    app.emit('open-file', { preventDefault() {} }, path)
+    app.emit('open-file', new Event('open-file', { cancelable: true }), path)
   }, sourcePath)
   await expect(page.getByLabel('笔记标题')).toHaveValue('Mac PDF sample')
   await expect(page.getByRole('img', { name: '笔记画布' }).first()).toBeVisible()
