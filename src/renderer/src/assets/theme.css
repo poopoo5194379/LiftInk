@@ -1,0 +1,113 @@
+:root {
+  --theme-base: #fff;
+  --theme-text: #282b3e;
+  --theme-muted: #575f75;
+  --theme-surface: color-mix(in srgb, var(--liftink-accent) 5%, var(--theme-base));
+  --theme-panel: color-mix(in srgb, var(--liftink-accent) 8%, var(--theme-base));
+  --theme-canvas: color-mix(in srgb, var(--liftink-accent) 14%, var(--theme-base));
+  --theme-outline: color-mix(in srgb, var(--liftink-accent) 25%, var(--theme-base));
+  --theme-selection: color-mix(in srgb, var(--liftink-accent) 18%, var(--theme-base));
+  --theme-accent-text: color-mix(in srgb, var(--liftink-accent) 86%, #111);
+  --theme-sky: color-mix(in srgb, var(--liftink-accent) 24%, var(--theme-base));
+  --theme-ridge: color-mix(in srgb, var(--liftink-accent) 54%, var(--theme-base));
+  --theme-sun: color-mix(in srgb, var(--liftink-accent) 8%, #fff6df);
+  --ink-accent: var(--theme-accent-text);
+  --ink-accent-soft: var(--theme-selection);
+  --ink-text: var(--theme-text);
+  --ink-secondary: var(--theme-muted);
+  --ink-muted: var(--theme-muted);
+  --ink-line: var(--theme-outline);
+  --ink-cta-surface: var(--liftink-accent);
+  --ink-glass-surface: color-mix(in srgb, var(--theme-surface) 91%, transparent);
+  --ink-glass-border: color-mix(in srgb, var(--theme-outline) 68%, transparent);
+  --ink-glass-shadow: 0 4px 15px color-mix(in srgb, var(--liftink-accent) 13%, transparent);
+  --ink-shell-surface: linear-gradient(180deg, var(--theme-sky), var(--theme-canvas) 58%, var(--theme-panel));
+  accent-color: var(--liftink-accent);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --theme-base: #202129;
+  --theme-text: #f0edf5;
+  --theme-muted: #c9c3d5;
+  --theme-surface: color-mix(in srgb, var(--liftink-accent) 13%, var(--theme-base));
+  --theme-panel: color-mix(in srgb, var(--liftink-accent) 20%, var(--theme-base));
+  --theme-canvas: color-mix(in srgb, var(--liftink-accent) 10%, var(--theme-base));
+  --theme-outline: color-mix(in srgb, var(--liftink-accent) 40%, var(--theme-base));
+  --theme-selection: color-mix(in srgb, var(--liftink-accent) 37%, var(--theme-base));
+  --theme-accent-text: color-mix(in srgb, var(--liftink-accent) 47%, white);
+  --theme-sky: color-mix(in srgb, var(--liftink-accent) 29%, var(--theme-base));
+  --theme-ridge: color-mix(in srgb, var(--liftink-accent) 63%, var(--theme-base));
+  --theme-sun: color-mix(in srgb, var(--liftink-accent) 32%, #a79670);
+  background: var(--theme-base);
+  color: var(--theme-text);
+}
+
+:root .app-shell {
+  background: var(--ink-shell-surface);
+  border-color: var(--theme-panel);
+  color: var(--theme-text);
+}
+:root .navigation {
+  background: linear-gradient(90deg, var(--theme-surface), color-mix(in srgb, var(--theme-surface) 78%, transparent) 80%, transparent);
+  color: var(--theme-text);
+}
+:root .app-shell .workspace { background: transparent; }
+:root .glass { background: var(--ink-glass-surface); border-color: var(--ink-glass-border); color: var(--theme-text); }
+:root :is(.search-results, .note-menu, .more-menu, .dialog-content, .settings-categories, .recent-file-list,
+  .editor-topbar, .editor-toolbox, .editor-statusbar, .editor-page-manager, .editor-dual-config, .editor-dual-side-label,
+  .editor-tool-popover, .editor-tooltip, .editor-export-dialog, .editor-pdf-search, .ink-reading-panel, .markdown-toolbar,
+  .agenda-date-panel, .agenda-timeline-panel, .agenda-overview > div) {
+  background: var(--theme-surface);
+  border-color: var(--theme-outline);
+  color: var(--theme-text);
+}
+:root :is(.editor-view, .editor-canvas, .editor-dual-panel, .markdown-scroll) {
+  background: var(--theme-canvas);
+  color: var(--theme-text);
+}
+:root :is(.search-hint, .search-caption, .search-empty, .search-box input, .editor-pdf-search-status,
+  .editor-brush-settings output, .editor-tool-popover small, .editor-tooltip span, .stat-values span, .folder-heading,
+  .recent-file-row .file-date, .stat-periods button, .keyword-periods button, .keyword-footnote, .chart-labels, .empty-day) {
+  color: var(--theme-muted);
+}
+.folder-item svg:first-child { color: color-mix(in srgb, var(--theme-accent-text) 62%, var(--theme-muted)); }
+.search-box input::placeholder { color: var(--theme-muted); opacity: .82; }
+:root :is(.nav-item.active, .folder-item.selected, .folder-item:hover, .search-results [role='option'].selected,
+  .search-results [role='option']:hover, .settings-categories button[aria-pressed='true'], .settings-categories button:hover,
+  .quick-button:hover, .editor-toolbox button.active, .page-manager-tabs button.active, .editor-layer-row.active,
+  .editor-pdf-search-results button[aria-current], .editor-tool-popover button[aria-pressed='true'], .editor-tool-popover button:hover,
+  .markdown-toolbar button[aria-pressed='true'], .markdown-toolbar button:hover, .recent-tabs button.active, .stat-periods button.selected,
+  .keyword-periods button.selected, .word-cloud .word:hover, .word-cloud .word:focus-visible,
+  .agenda-month-grid button.selected, .agenda-month-picker button.selected, .recent-file-row:hover) {
+  background: var(--theme-selection);
+  color: var(--theme-accent-text);
+}
+:root :is(.search-box kbd, .goal-toggle, .section-title .count, .avatar, .goals .progress, .recent-tabs, .editor-dual-divider, .editor-dual-excerpt) {
+  background: var(--theme-panel);
+  color: var(--theme-accent-text);
+}
+.word-cloud .word.core { color: var(--theme-accent-text); }
+.word-cloud .word.secondary { color: color-mix(in srgb, var(--theme-accent-text) 70%, var(--theme-muted)); }
+.word-cloud .word.auxiliary { color: color-mix(in srgb, var(--theme-accent-text) 43%, var(--theme-muted)); }
+.calendar-grid .selected-day { box-shadow: 0 4px 10px color-mix(in srgb, var(--liftink-accent) 52%, transparent); }
+:root :is(.editor-brush-settings input, .editor-shape-select, .editor-dual-config select,
+  .editor-pdf-search-row input, .editor-tool-popover button, .editor-layer-row, .editor-layer-fixed) {
+  border-color: var(--theme-outline);
+}
+.editor-brush-settings input[type='range'] { accent-color: var(--liftink-accent); }
+:root :is(.editor-tool-popover button, .editor-shape-select, .editor-dual-config select, .editor-pdf-search-row input,
+  .editor-layer-row, .editor-layer-fixed, .recent-search, .form-field input, .form-field select,
+  .preference-row select, .preference-row input[type='number']) {
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  border-color: var(--theme-outline);
+}
+.markdown-paper { color: #282b3e; }
+:root .goals .progress > i { background: var(--liftink-accent); }
+:root .editor-dual-divider:is(:hover, :focus-visible) { background: var(--theme-outline); }
+:root .editor-body [data-image-drop='true'] { outline-color: var(--theme-accent-text); }
+:root .editor-eraser-outline {
+  fill: color-mix(in srgb, var(--liftink-accent) 13%, transparent);
+  stroke: var(--theme-accent-text);
+}

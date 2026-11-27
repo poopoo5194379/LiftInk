@@ -43,7 +43,6 @@ import {
   Folder,
   FolderOpen,
   Home,
-  Mic,
   MoreHorizontal,
   Network,
   PenLine,
@@ -165,6 +164,7 @@ function App(): React.JSX.Element {
   const backupInProgress = useRef(false)
   const lastBackupAttempt = useRef(0)
   const openFileInput = useRef<HTMLInputElement>(null)
+  const searchReturnFocus = useRef<HTMLElement | null>(null)
   const [editorReturn, setEditorReturn] = useState<Screen>('home')
   const [quickKind, setQuickKind] = useState<QuickKind>('import')
   const [quickReturn, setQuickReturn] = useState<Screen>('home')
@@ -202,6 +202,7 @@ function App(): React.JSX.Element {
   const [keywordToBlock, setKeywordToBlock] = useState<string | null>(null)
   const [query, setQuery] = useState(''),
     [searchOpen, setSearchOpen] = useState(false),
+    [globalSearchOpen, setGlobalSearchOpen] = useState(false),
     [searchIndex, setSearchIndex] = useState(0),
     [folderOpen, setFolderOpen] = useState(() => !preferences.rememberSidebar || localStorage.getItem('liftink:sidebar-open') !== 'false'),
     [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
@@ -270,25 +271,22 @@ function App(): React.JSX.Element {
         setSelectedNav(folder)
         setScreen('folder')
       }
-    } else if (previous === 'editor' && preferences.restoreNote) {
+    } else if ((previous === 'editor' || previous === 'quick') && preferences.restoreNote) {
       const id = localStorage.getItem('liftink:last-note')
-      const note = entries.find((entry) => entry.id === id && !entry.trashed && !entry.workspace)
-      if (note) {
-        setActiveNoteId(note.id)
-        setFocusNoteId(note.id)
-        setScreen('editor')
-      }
+      const note = entries.find((entry) => entry.id === id && !entry.trashed)
+      if (note) openNote(note)
     }
   })
   useEffect(() => {
-    if (!notesReady || !['home', 'recent', 'favorites', 'folder', 'tags', 'agenda', 'editor'].includes(screen)) return
-    if (screen === 'editor' && (draftRef.current?.id === activeNoteId || !activeNoteId)) return
+    if (!notesReady || !['home', 'recent', 'favorites', 'folder', 'tags', 'agenda', 'editor', 'quick'].includes(screen)) return
+    const isNote = screen === 'editor' || screen === 'quick'
+    if (isNote && (!activeNoteId || draftNote?.id === activeNoteId)) return
     localStorage.setItem('liftink:last-workspace', screen)
-    if (screen === 'editor' && activeNoteId) localStorage.setItem('liftink:last-note', activeNoteId)
+    if (isNote && activeNoteId) localStorage.setItem('liftink:last-note', activeNoteId)
     if (screen === 'folder' && selectedFolder) localStorage.setItem('liftink:last-folder', selectedFolder)
   }, [screen, selectedFolder, activeNoteId, notesReady, draftNote])
   useEffect(() => {
-    if (!notesReady || !['home', 'recent', 'favorites', 'folder', 'tags'].includes(screen)) return
+    if (!notesReady || (!globalSearchOpen && !['home', 'recent', 'favorites', 'folder', 'tags'].includes(screen))) return
     const controller = new AbortController()
     const { signal } = controller
     const candidates = notes.filter((note) => !note.trashed)
@@ -309,7 +307,7 @@ function App(): React.JSX.Element {
       if (!signal.aborted) setPdfIndexing(false)
     })()
     return () => controller.abort()
-  }, [notes, notesReady, screen])
+  }, [notes, notesReady, screen, globalSearchOpen])
   useEffect(() => {
     let cancelled = false
     void window.liftInk
@@ -437,7 +435,7 @@ function App(): React.JSX.Element {
   }, [notes, query, pdfContents, noteContents])
   const libraryNotes = notes.filter((note) => !note.trashed)
   const showGettingStarted = notesReady && notes.length === 0 && !query.trim() && !selectedFolder
-  const savedNotes = libraryNotes.filter((note) => !note.workspace && (note.documentExpected || note.pageCount !== undefined))
+  const pagedNotes = libraryNotes.filter((note) => !note.workspace && (note.documentExpected || note.pageCount !== undefined))
   const today = new Date()
   const daysAgo = (days: number): Date => new Date(today.getFullYear(), today.getMonth(), today.getDate() - days)
   const focusSince = dayKey(daysAgo(chartPeriod - 1))
@@ -709,10 +707,16 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
       if (vaultBusy) return
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && !e.isComposing) {
         e.preventDefault()
-        document.querySelector<HTMLInputElement>('.search-box input')?.focus()
-        setSearchOpen(true)
+        if (screen === 'home') {
+          document.querySelector<HTMLInputElement>('.search-box input')?.focus()
+          setSearchOpen(true)
+        } else {
+          if (!globalSearchOpen) searchReturnFocus.current = (document.activeElement as HTMLElement | null)
+          setGlobalSearchOpen(true)
+          setSearchOpen(true)
+        }
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault()
@@ -725,7 +729,7 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [createNote, vaultBusy])
+  }, [createNote, globalSearchOpen, screen, vaultBusy])
   useEffect(() => {
     const closeSearch = (event: PointerEvent): void => {
       if (!(event.target as HTMLElement).closest('.search-wrap')) setSearchOpen(false)
@@ -733,7 +737,17 @@ function App(): React.JSX.Element {
     document.addEventListener('pointerdown', closeSearch)
     return () => document.removeEventListener('pointerdown', closeSearch)
   }, [])
-  const openSearchResult = (result: SearchResult): void => {
+  const openSearchResult = async (result: SearchResult): Promise<void> => {
+    if (globalSearchOpen) {
+      try {
+        await flushEditorSaves()
+        await flushVaultSettings()
+      } catch (error) {
+        setToast(`保存失败，未切换笔记：${String(error)}`)
+        return
+      }
+    }
+    setGlobalSearchOpen(false)
     setSearchOpen(false)
     const note = notes.find((entry) => entry.id === result.id)
     if (note) openNote(note, pdfContents.get(note.id)?.some((text) => text.includes(normalizePdfText(query))) ? query : '')
@@ -1125,6 +1139,92 @@ function App(): React.JSX.Element {
       </div>
     )
   }
+  const searchBox = (
+    <div className="search-wrap">
+      <label className="search-box glass">
+        <Search size={23} />
+        <input
+          placeholder="搜索笔记、PDF、关键词..."
+          value={query}
+          onFocus={() => {
+            setSearchOpen(true)
+            setSearchIndex(0)
+          }}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setSearchIndex(0)
+            setSearchOpen(true)
+          }}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return
+            if (e.key === 'ArrowDown' && searchResults.length) {
+              e.preventDefault()
+              setSearchIndex((index) => Math.min(index + 1, searchResults.length - 1))
+            }
+            if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setSearchIndex((index) => Math.max(index - 1, 0))
+            }
+            if (e.key === 'Enter' && searchResults[searchIndex]) {
+              e.preventDefault()
+              void openSearchResult(searchResults[searchIndex])
+            }
+            if (e.key === 'Escape' && !globalSearchOpen) {
+              setSearchOpen(false)
+              e.currentTarget.blur()
+            }
+          }}
+          aria-label="搜索笔记、PDF、关键词"
+          aria-controls="search-results"
+          aria-expanded={searchOpen && !!query.trim()}
+          aria-activedescendant={
+            searchOpen && query.trim() && searchResults[searchIndex]
+              ? `search-${searchResults[searchIndex].id}`
+              : undefined
+          }
+        />
+        <kbd>{navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl'} K</kbd>
+      </label>
+      {searchOpen && !!query.trim() && (
+        <div
+          className="search-results glass"
+          id="search-results"
+          role="listbox"
+          aria-label="搜索结果"
+        >
+          <div className="search-caption">
+            {query.trim() ? `搜索结果 · ${searchResults.length}` : '最近项目'}
+          </div>
+          {searchResults.length ? (
+            searchResults.map((result, index) => (
+              <button
+                id={`search-${result.id}`}
+                role="option"
+                aria-selected={index === searchIndex}
+                className={index === searchIndex ? 'selected' : ''}
+                key={result.id}
+                onMouseEnter={() => setSearchIndex(index)}
+                onClick={() => void openSearchResult(result)}
+              >
+                <NoteFileIcon kind={result.kind} size={20} />
+                <span>
+                  <strong>{result.title}</strong>
+                  <small>
+                    {result.folder} · {result.summary}
+                  </small>
+                </span>
+                <em>{result.kind === 'pdf' ? 'PDF' : '笔记'}</em>
+              </button>
+            ))
+          ) : (
+            <div className="search-empty">{pdfIndexing ? '正在索引 PDF 正文…' : '没有找到匹配的笔记或 PDF'}</div>
+          )}
+          <div className="search-hint">↑ ↓ 选择 · Enter 打开 · Esc 关闭</div>
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div
       className={`app-shell view-${screen}${['trash', 'folder', 'favorites', 'focus'].includes(screen) ? ' view-recent' : ''}`}
@@ -1155,7 +1255,23 @@ function App(): React.JSX.Element {
         void createNoteFromFile(files)
       }}
     >
-      <div className="mountain-backdrop" aria-hidden="true" />
+      <svg className="mountain-backdrop" aria-hidden="true" viewBox="0 0 1500 330" preserveAspectRatio="xMidYMin slice">
+        <defs>
+          <linearGradient id="liftink-sky" x2="0" y2="1">
+            <stop stopColor="var(--theme-sky)" /><stop offset=".65" stopColor="var(--theme-surface)" />
+            <stop offset="1" stopColor="var(--theme-base)" />
+          </linearGradient>
+          <linearGradient id="liftink-hill" x2="0" y2="1">
+            <stop stopColor="var(--theme-ridge)" /><stop offset="1" stopColor="var(--theme-canvas)" />
+          </linearGradient>
+        </defs>
+        <rect width="1500" height="330" fill="url(#liftink-sky)" />
+        <circle cx="1100" cy="65" r="34" fill="var(--theme-sun)" opacity=".8" />
+        <path d="M0 180 170 145 280 163 420 106 550 168 700 139 850 171 1010 98 1100 120 1230 39 1300 116 1400 92 1500 143V330H0Z" fill="var(--theme-ridge)" opacity=".47" />
+        <path d="M0 214 130 178 270 210 450 154 580 196 725 140 860 207 1040 142 1125 184 1250 53 1320 154 1420 126 1500 165V330H0Z" fill="url(#liftink-hill)" opacity=".69" />
+        <path d="m1160 135 90-82 70 101-34-17-39-56-40 54Z" fill="var(--theme-surface)" opacity=".86" />
+        <path d="M0 250 140 231 255 245 400 210 560 249 720 218 870 251 1040 212 1200 240 1360 195 1500 229V330H0Z" fill="var(--theme-canvas)" opacity=".58" />
+      </svg>
       <aside className="navigation">
         <div className="window-dots">
           <i />
@@ -1243,7 +1359,7 @@ function App(): React.JSX.Element {
           <Bell size={23} />
           {profile.reminders && agendaItems.some((item) => !item.done && item.date === dayKey(new Date())) && <i className="notification-dot" />}
         </button>
-        <button aria-label="账户" className="avatar" title={profile.name || '本机资料'} onClick={() => { setSettingsSection('general'); setSelectedNav('设置'); setScreen('settings') }}>
+        <button aria-label="本机资料" className="avatar" title={profile.name || '本机资料'} onClick={() => { setSettingsSection('general'); setSelectedNav('设置'); setScreen('settings') }}>
           <UserRound size={22} />
         </button>
       </header>
@@ -1260,88 +1376,7 @@ function App(): React.JSX.Element {
       <main key={screen === 'folder' ? `folder:${selectedFolder}` : screen} className="workspace page-enter">
         {screen === 'home' ? (
           <div className="content-area">
-            <div className="search-wrap">
-              <label className="search-box glass">
-                <Search size={23} />
-                <input
-                  placeholder="搜索笔记、PDF、关键词..."
-                  value={query}
-                  onFocus={() => {
-                    setSearchOpen(true)
-                    setSearchIndex(0)
-                  }}
-                  onChange={(e) => {
-                    setQuery(e.target.value)
-                    setSearchIndex(0)
-                    setSearchOpen(true)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'ArrowDown') {
-                      e.preventDefault()
-                      setSearchIndex((index) => Math.min(index + 1, searchResults.length - 1))
-                    }
-                    if (e.key === 'ArrowUp') {
-                      e.preventDefault()
-                      setSearchIndex((index) => Math.max(index - 1, 0))
-                    }
-                    if (e.key === 'Enter' && searchResults[searchIndex]) {
-                      e.preventDefault()
-                      openSearchResult(searchResults[searchIndex])
-                    }
-                    if (e.key === 'Escape') {
-                      setSearchOpen(false)
-                      e.currentTarget.blur()
-                    }
-                  }}
-                  aria-label="搜索笔记、PDF、关键词"
-                  aria-controls="search-results"
-                  aria-expanded={searchOpen && !!query.trim()}
-                  aria-activedescendant={
-                    searchOpen && query.trim() && searchResults[searchIndex]
-                      ? `search-${searchResults[searchIndex].id}`
-                      : undefined
-                  }
-                />
-                <kbd>{navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl'} K</kbd>
-              </label>
-              {searchOpen && !!query.trim() && (
-                <div
-                  className="search-results glass"
-                  id="search-results"
-                  role="listbox"
-                  aria-label="搜索结果"
-                >
-                  <div className="search-caption">
-                    {query.trim() ? `搜索结果 · ${searchResults.length}` : '最近项目'}
-                  </div>
-                  {searchResults.length ? (
-                    searchResults.map((result, index) => (
-                      <button
-                        id={`search-${result.id}`}
-                        role="option"
-                        aria-selected={index === searchIndex}
-                        className={index === searchIndex ? 'selected' : ''}
-                        key={result.id}
-                        onMouseEnter={() => setSearchIndex(index)}
-                        onClick={() => openSearchResult(result)}
-                      >
-                        <NoteFileIcon kind={result.kind} size={20} />
-                        <span>
-                          <strong>{result.title}</strong>
-                          <small>
-                            {result.folder} · {result.summary}
-                          </small>
-                        </span>
-                        <em>{result.kind === 'pdf' ? 'PDF' : '笔记'}</em>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="search-empty">{pdfIndexing ? '正在索引 PDF 正文…' : '没有找到匹配的笔记或 PDF'}</div>
-                  )}
-                  <div className="search-hint">↑ ↓ 选择 · Enter 打开 · Esc 关闭</div>
-                </div>
-              )}
-            </div>
+            {searchBox}
             <div className="quick-actions">
               <button className="new-note" onClick={createNote}>
                 <PenLine size={32} />
@@ -1352,7 +1387,6 @@ function App(): React.JSX.Element {
                 <Plus size={25} />
               </button>
               {[
-                [Mic, '语音速记'],
                 [FileImage, '导入 PDF/图片'],
                 [Network, '新建思维导图'],
                 [FileText, '新建 Markdown']
@@ -1362,13 +1396,7 @@ function App(): React.JSX.Element {
                   key={label as string}
                   onClick={() => {
                     if (label === '新建 Markdown') { createMarkdownNote(); return }
-                    openHomeQuick(
-                      label === '语音速记'
-                        ? 'voice'
-                        : label === '导入 PDF/图片'
-                          ? 'import'
-                          : 'mindmap'
-                    )
+                    openHomeQuick(label === '导入 PDF/图片' ? 'import' : 'mindmap')
                   }}
                 >
                   <Icon size={27} />
@@ -1385,21 +1413,10 @@ function App(): React.JSX.Element {
                 </button>
                 {moreOpen && (
                   <div className="more-menu glass">
-                    {['新建思维导图', '新建白板'].map((label) => (
-                      <button
-                        key={label}
-                        className={label === '新建思维导图' ? 'compact-action' : undefined}
-                        onClick={() => {
-                          setMoreOpen(false)
-                          setActiveNoteId(null)
-                          setQuickReturn('home')
-                          if (label === '新建白板') void createNoteFromFile(undefined, false, 'board')
-                          else { setQuickKind('mindmap'); setScreen('quick') }
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ))}
+                    <button onClick={() => {
+                      setMoreOpen(false)
+                      void createNoteFromFile(undefined, false, 'board')
+                    }}>新建白板</button>
                   </div>
                 )}
               </div>
@@ -1495,7 +1512,7 @@ function App(): React.JSX.Element {
                   <div>
                     <FileText size={29} />
                     <strong>
-                      {savedNotes.length} <small>篇</small>
+                    {libraryNotes.length} <small>篇</small>
                     </strong>
                     <span>笔记总数</span>
                   </div>
@@ -1507,7 +1524,7 @@ function App(): React.JSX.Element {
                   <div>
                     <PenLine size={32} />
                     <strong>
-                      {savedNotes.reduce((total, note) => total + (note.pageCount ?? 0), 0)} <small>页</small>
+                    {pagedNotes.reduce((total, note) => total + (note.pageCount ?? 0), 0)} <small>页</small>
                     </strong>
                     <span>笔记页数</span>
                   </div>
@@ -1521,20 +1538,20 @@ function App(): React.JSX.Element {
                   >
                     <defs>
                       <linearGradient id="area" x1="0" x2="0" y1="0" y2="1">
-                        <stop stopColor="#8d74f6" stopOpacity=".32" />
-                        <stop offset="1" stopColor="#8d74f6" stopOpacity=".02" />
+                        <stop stopColor="var(--theme-accent-text)" stopOpacity=".32" />
+                        <stop offset="1" stopColor="var(--theme-accent-text)" stopOpacity=".02" />
                       </linearGradient>
                     </defs>
                     <path d={`${chartLine} L515 128 L5 128Z`} fill="url(#area)" />
-                    <path d={chartLine} fill="none" stroke="#8066ff" strokeWidth="2.5" />
+                    <path d={chartLine} fill="none" stroke="var(--theme-accent-text)" strokeWidth="2.5" />
                     {chartPoints.map(({ x, y }, index) => (
                       <circle
                         key={index}
                         cx={x}
                         cy={y}
                         r="3.3"
-                        fill="white"
-                        stroke="#8066ff"
+                        fill="var(--theme-panel)"
+                        stroke="var(--theme-accent-text)"
                         strokeWidth="2"
                         tabIndex={0}
                         aria-label={`${chartDates[index]}，专注 ${formatDuration(chartValues[index])}`}
@@ -2020,6 +2037,24 @@ function App(): React.JSX.Element {
           </Dialog.Content>}
         </Dialog.Portal>
       </Dialog.Root>
+      <Dialog.Root open={globalSearchOpen} onOpenChange={(open) => {
+        setGlobalSearchOpen(open)
+        if (!open) { setSearchOpen(false); setQuery('') }
+      }}>
+        <Dialog.Portal container={document.fullscreenElement}>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content glass global-search-dialog" aria-describedby={undefined}
+            onCloseAutoFocus={(event) => {
+              const target = searchReturnFocus.current
+              searchReturnFocus.current = null
+              if (target?.isConnected) { event.preventDefault(); target.focus() }
+            }}>
+            <Dialog.Title>全局搜索</Dialog.Title>
+            {searchBox}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
       <Dialog.Root
         open={!!modal}
         onOpenChange={(open) => {
@@ -2076,7 +2111,7 @@ function App(): React.JSX.Element {
                   event.preventDefault()
                   updateNote(operationNoteId, { folder: moveTarget })
                   setModal(null)
-                  setToast(`已移至「${moveTarget}」· 本次演示有效`)
+                  setToast(`已移至「${moveTarget}」`)
                 }}
               >
                 <Dialog.Title>移动笔记</Dialog.Title>
@@ -2199,19 +2234,7 @@ function App(): React.JSX.Element {
                   {agendaDraft.id ? '保存修改' : '添加日程'}
                 </button>
               </form>
-            ) : (
-              <>
-                <Dialog.Title>{modal}</Dialog.Title>
-                <p>
-                  {modal === '新建笔记'
-                    ? '空白画布与本地保存将在编辑器阶段接入。当前仅展示首页入口。'
-                    : '该功能将在后续阶段接入。当前仅展示首页入口。'}
-                </p>
-                <div className="dialog-options">
-                  <button onClick={() => setModal(null)}>知道了</button>
-                </div>
-              </>
-            )}
+            ) : null}
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

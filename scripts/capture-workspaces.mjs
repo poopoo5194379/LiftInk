@@ -34,7 +34,6 @@ for (const [width, height] of [
     await page.getByRole('button', { name: '笔记位置' }).click()
     await capture('folder-picker')
     await page.getByRole('button', { name: '返回上一页' }).click()
-    if (width <= 1400) await page.getByRole('button', { name: '更多操作', exact: true }).click()
     await page.getByRole('button', { name: '新建思维导图' }).click()
     await capture('mindmap')
     await page.getByRole('button', { name: '返回', exact: true }).click()

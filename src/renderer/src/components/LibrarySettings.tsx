@@ -17,7 +17,7 @@ const sections = [
   ['canvas', '画布与笔记', '纸张、页面、导航方式', Notebook],
   ['files', '文件与备份', '存储、自动保存、恢复', FolderSync],
   ['shortcuts', '快捷键', '文件、编辑和书写工具', Keyboard],
-  ['about', '关于与诊断', '版本、更新、书写问题', Info]
+  ['about', '关于与诊断', '版本、书写问题', Info]
 ] as const
 
 const shortcuts = [
@@ -150,7 +150,6 @@ export default function LibrarySettings({ profile, onProfile, folders, onFolder,
         <Choice label="关闭窗口时" value={p.close} options={[[ 'exit', '退出应用' ], [ 'tray', '最小化到托盘' ]]} onChange={(close) => onPreferences({ close })} />
         <Toggle label="恢复上次打开的笔记" checked={p.restoreNote} onChange={(restoreNote) => onPreferences({ restoreNote })} />
         <Choice label="新建文件默认位置" value={p.newFolder} options={[[ 'current', '当前文件夹' ], [ 'all', '全部笔记（未分类）' ]]} onChange={(newFolder) => onPreferences({ newFolder })} />
-        <div className="preference-row"><span>自动检查更新</span><span>尚未配置更新源</span></div>
         <section className="glass library-setting" aria-label="思绪拾光屏蔽词">
           <h2>思绪拾光屏蔽词</h2>
           {blockedKeywords.length ? <div className="library-setting-actions">
@@ -264,7 +263,7 @@ export default function LibrarySettings({ profile, onProfile, folders, onFolder,
         })}
       </section>}
       {section === 'about' && <section className="glass library-setting">
-        <h2>关于与诊断</h2><p>LiftInk {diagnostics?.version}</p><p>更新源尚未配置。</p>
+        <h2>关于与诊断</h2><p>LiftInk {diagnostics?.version}</p>
         <details><summary>版本信息</summary><p>本版包括笔记全屏、日程周历和月历、PDF 插入位置及关键词屏蔽。</p></details>
         <h3>报告书写问题</h3><p>可先检查诊断内容，再导出到本机文件。</p>
         <div className="library-setting-actions"><button disabled={!diagnostics} onClick={() => setDiagnosticsOpen(!diagnosticsOpen)}>查看诊断信息</button>

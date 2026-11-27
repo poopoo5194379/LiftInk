@@ -9,7 +9,7 @@ const temp = await realpath(tmpdir())
 const root = await mkdtemp(join(temp, 'liftink-workflow-'))
 const packaged = process.env.LIFTINK_TEST_PACKAGED_EXE
 const launch = (dir) => electron.launch({ executablePath: packaged, env: { ...process.env, LIFTINK_TEST_DATA_DIR: dir },
-  args: [...(packaged ? [] : ['.']), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] })
+  args: packaged ? [] : ['.'] })
 const backup = join(root, 'workspace.liftink')
 let app
 let page
@@ -42,21 +42,61 @@ try {
   await expect.poll(async () => (await index()).some((note) => note.draft?.mindMap?.[0].label === '迁移导图橘木')).toBe(true)
 
   await button('首页').click()
-  await button('语音速记').click()
-  await button('开始录音').click()
-  await expect(button('停止录音')).toBeVisible()
-  await page.waitForTimeout(500)
-  await button('返回').click()
-  await button('语音速记').click()
-  await expect(page.getByLabel('语音速记录音')).toBeVisible()
-  await button('开始录音').click()
-  await expect(button('停止录音')).toBeVisible()
-  await page.waitForTimeout(500)
-  await button('停止录音').click()
-  await expect(page.getByLabel('选择速记录音').locator('option')).toHaveCount(2)
-  await page.getByLabel('速记文字').fill('速记独有栗子词')
-  await button('保存到未分类').click()
-  await expect.poll(async () => (await index()).find((note) => note.kind === 'voice')?.draft?.recordings?.length).toBe(2)
+  await expect(button('语音速记')).toHaveCount(0)
+  await expect(page.locator('.stat-values > div').first()).toContainText('1 篇')
+  await button('设置').click()
+  await page.getByRole('button', { name: /^通用/ }).click()
+  const startup = page.getByLabel('启动时打开')
+  await startup.selectOption('workspace')
+  await startup.focus()
+  await page.keyboard.press('Control+k')
+  const search = page.getByRole('dialog', { name: '全局搜索' }).getByRole('textbox')
+  await expect(search).toBeFocused()
+  await search.press('Escape')
+  await expect(startup).toBeFocused()
+  await page.keyboard.press('Control+k')
+  await search.fill('迁移导图橘木')
+  await search.press('Enter')
+  await expect(page.locator('.mindmap-node.root')).toContainText('迁移导图橘木')
+  await app.close()
+  app = await launch(join(root, 'source'))
+  await setWindow()
+  await expect(page.locator('.mindmap-node.root')).toContainText('迁移导图橘木')
+  await page.evaluate(async () => {
+    const now = Date.now()
+    const recordings = await Promise.all([1, 2].map(async (index) => {
+      // Distinct EBML fixtures for exercising old attachment references and byte-preserving export.
+      const base64 = btoa(String.fromCharCode(0x1a, 0x45, 0xdf, 0xa3, index))
+      const { assetId } = await window.liftInk.storeMedia('audio/webm', base64)
+      return { id: `old-${index}`, assetId, startedAt: now - 2_000, endedAt: now }
+    }))
+    const note = {
+      id: 'legacy-voice', title: '旧版语音速记测试', originalTitle: '旧版语音速记测试',
+      createdAt: now, date: '', kind: 'voice', workspace: 'voice', folder: '未分类',
+      tags: [], favorite: false, summary: '旧版语音速记',
+      draft: { transcript: '速记独有栗子词', nodes: [], boardItems: [], recordings }
+    }
+    const { value } = await window.liftInk.loadNoteIndex()
+    await window.liftInk.saveNoteIndex([note, ...(value ?? [])])
+  })
+  await page.reload()
+  await button('首页').click()
+  await expect(page.locator('.stat-values > div').first()).toContainText('2 篇')
+  await expect(button('本机资料')).toBeVisible()
+  await page.locator('.note-tile').filter({ hasText: '旧版语音速记测试' }).hover()
+  await button('旧版语音速记测试 更多操作').click()
+  await button('移动到').click()
+  await page.getByLabel('目标文件夹').selectOption('课程笔记')
+  await button('移动到此处').click()
+  await expect(page.getByText('已移至「课程笔记」', { exact: true })).toBeVisible()
+  await page.locator('.note-card').filter({ hasText: '旧版语音速记测试' }).click()
+  await expect(page.getByLabel('速记文字')).toHaveValue('速记独有栗子词')
+  await expect(page.locator('audio')).toHaveCount(0)
+  await expect(button('开始录音')).toHaveCount(0)
+  await app.close()
+  app = await launch(join(root, 'source'))
+  await setWindow()
+  await expect(page.getByLabel('速记文字')).toHaveValue('速记独有栗子词')
 
   await button('首页').click()
   await button('导入 PDF/图片').click()
@@ -190,7 +230,7 @@ try {
   await page.keyboard.insertText('双开补充')
   await page.keyboard.press('Control+s')
   await expect(companion.getByText('已保存', { exact: true })).toBeVisible()
-  console.log('Current date, isolated library, quick draft, multi-recording, Markdown import/search, calendar links, folders, portable restore, missing-asset rejection, safe attachment cleanup and mixed-format editing passed.')
+  console.log('Current date, isolated library, quick draft, global search, restart, legacy voice records, Markdown import/search, calendar links, folders, portable restore, missing-asset rejection, safe attachment cleanup and mixed-format editing passed.')
 } finally {
   await app?.close().catch(() => undefined)
   const target = await realpath(root)

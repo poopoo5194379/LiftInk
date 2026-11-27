@@ -2,13 +2,11 @@
 import type { VaultOperation, VaultSettings } from '../../shared/vault'
 import type {
   AppDiagnostics,
-  AudioTranscript,
   CapturedScreen,
   NoteDocument,
   NoteRecord,
   OpenedPdf,
   PdfOcrPage,
-  SpeechLanguage,
   StorageLoad,
   StorageInfo,
   StoredImage,
@@ -46,7 +44,6 @@ declare global {
       saveNativePdfText: (id: string, pages: string[]) => Promise<void>
       recognizeInk: (image: string) => Promise<string>
       recognizePdfPage: (id: string, page: number, image: string, width: number, height: number, refresh?: boolean) => Promise<PdfOcrPage>
-      transcribeAudio: (assetId: string, waveform: Float32Array, language: SpeechLanguage) => Promise<AudioTranscript>
       saveDocument: (document: NoteDocument) => Promise<void>
       validateDocument: (document: NoteDocument) => Promise<boolean>
       storeImage: (mime: string, base64: string) => Promise<StoredImage>

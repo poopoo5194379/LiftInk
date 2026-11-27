@@ -47,13 +47,13 @@ try {
     await page.mouse.up()
   }
   await openRow('Real PDF')
-  await expect(page.getByRole('img', { name: 'PDF 原页' })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'PDF 原页' }).first()).toBeVisible()
   await button('自定义钢笔笔宽').click()
   await page.getByLabel('精确笔宽').fill('5.7')
   await page.getByLabel('精确笔宽').press('Enter')
   await expect(button('自定义钢笔笔宽')).toHaveText('5.7 px')
   await page.keyboard.press('Escape')
-  const canvas = page.getByRole('img', { name: '笔记画布' })
+  const canvas = page.getByRole('img', { name: '笔记画布' }).first()
   await drawBox(canvas, 0.16, 0.27)
   await button('文本').click()
   const canvasBounds = await canvas.boundingBox()
@@ -80,9 +80,11 @@ try {
   assert.notEqual(...pagePixels)
   console.log('Homepage file picker stored real PDF and image notes with different first-page thumbnails.')
 
-  await button('新增目标').click()
-  await page.getByLabel('目标名称').fill('第四项目标')
-  await button('保存目标').click()
+  for (const title of ['第一项目标', '第二项目标', '第三项目标', '第四项目标']) {
+    await button('新增目标').click()
+    await page.getByLabel('目标名称').fill(title)
+    await button('保存目标').click()
+  }
   await expect(page.locator('.goals .goal:visible')).toHaveCount(3)
   await page.locator('.home-goals-more summary').click()
   await expect(button('第四项目标')).toBeVisible()
@@ -106,7 +108,6 @@ try {
     if (screenshotDirectory) await page.screenshot({ path: join(screenshotDirectory, `home-media-${width}x${height}.png`) })
   }
 
-  await button('更多操作').click()
   await button('新建思维导图').click()
   await page.getByLabel('内容标题').fill('Mind map fixture')
   await button('中心主题').press('Tab')
@@ -190,7 +191,7 @@ try {
   await expect(button('分支子主题')).toBeVisible()
   await button('返回').click()
   await openRow('Real PDF')
-  await expect(page.getByRole('img', { name: 'PDF 原页' })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'PDF 原页' }).first()).toBeVisible()
   assert.equal(await page.evaluate(async () => {
     const index = await window.liftInk.loadNoteIndex()
     const note = index.value.find((note) => note.title === 'Real PDF')

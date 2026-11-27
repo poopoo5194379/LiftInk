@@ -30,8 +30,9 @@ export default function PdfSearchPanel({
   const input = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState(initialQuery)
   const [attempt, setAttempt] = useState(0)
-  const [ocr, setOcr] = useState(new Map<string, IndexedPage>())
+  const [ocr, setOcr] = useState(new Map<string, IndexedPage & { copyText: string }>())
   const [progress, setProgress] = useState('')
+  const [copyStatus, setCopyStatus] = useState<{ pageId: string; message: string }>()
   const [recognizing, setRecognizing] = useState(false)
   const scanTask = useRef<AbortController | null>(null)
   const [loaded, setLoaded] = useState<{
@@ -53,6 +54,7 @@ export default function PdfSearchPanel({
   )
   const scans = index ? pages.filter((page) => page.sourcePdfId && page.sourcePageNumber && !getIndexedPage(index, page)?.text.trim() && !ocr.has(page.id)) : []
   const currentPdf = pages.find((page) => page.id === currentPageId && page.sourcePdfId && page.sourcePageNumber)
+  const currentOcrText = currentPdf && ocr.get(currentPdf.id)?.copyText
 
   useEffect(() => {
     if (open) {
@@ -78,7 +80,7 @@ export default function PdfSearchPanel({
       }
       const cached = await Promise.all(pages.flatMap((page) => page.sourcePdfId && page.sourcePageNumber
         ? [window.liftInk.loadPdfOcr(page.sourcePdfId, page.sourcePageNumber).then((result) =>
-            result ? [page.id, indexOcrText(result)] as const : null
+            result ? [page.id, { ...indexOcrText(result), copyText: result.text }] as const : null
           ).catch(() => null)]
         : []))
       if (abort.signal.aborted) return
@@ -102,12 +104,12 @@ export default function PdfSearchPanel({
     const task = new AbortController()
     scanTask.current = task
     setRecognizing(true)
+    setCopyStatus(undefined)
     setProgress(`正在识别 0 / ${entries.length} 页…`)
     let recognized = 0
     void recognizePdfPages(entries, task.signal, (id, result) => {
-      if (!result.text.trim()) return
-      recognized++
-      setOcr((previous) => new Map(previous).set(id, indexOcrText(result)))
+      if (result.text.trim()) recognized++
+      setOcr((previous) => new Map(previous).set(id, { ...indexOcrText(result), copyText: result.text }))
       onOcrUpdated()
     }, (done) => setProgress(`正在识别 ${done} / ${entries.length} 页…`), refresh).then((failed) => {
       const empty = entries.length - failed - recognized
@@ -163,8 +165,15 @@ export default function PdfSearchPanel({
             {ocr.has(currentPdf.id) ? 'OCR 重新识别当前页' : 'OCR 识别当前页'}
           </button>}
           {scans.length > 0 && <button type="button" disabled={recognizing} onClick={() => recognize(scans)}>OCR 识别扫描页（{scans.length}）</button>}
+          {currentPdf && currentOcrText?.trim() && <button type="button" disabled={recognizing} onClick={() => {
+            void navigator.clipboard.writeText(currentOcrText).then(
+              () => setCopyStatus({ pageId: currentPdf.id, message: '已复制当前页 OCR 文字' }),
+              () => setCopyStatus({ pageId: currentPdf.id, message: '无法访问剪贴板，请重试' })
+            )
+          }}>复制当前页 OCR 文字</button>}
           {recognizing && <button type="button" onClick={() => scanTask.current?.abort()}>停止识别</button>}
           {progress && <span role="status">{progress}</span>}
+          {currentPdf && copyStatus?.pageId === currentPdf.id && <span role="status">{copyStatus.message}</span>}
         </div>
       )}
       {result.hits.length > 0 && (

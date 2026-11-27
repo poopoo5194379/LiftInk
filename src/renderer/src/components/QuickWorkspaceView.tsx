@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { flushVaultSettings, getVaultSetting, setVaultSetting } from '../editor/vaultSettings'
-import JSZip from 'jszip'
 import { base64Of } from '../editor/portable'
-import { ChevronLeft, Download, FileImage, FileText, Mic, Plus, SquarePen } from 'lucide-react'
+import { ChevronLeft, Download, FileImage, FileText, Plus, SquarePen } from 'lucide-react'
 import type { MindMapNode, NoteRecord } from '../../../shared/editor'
-import { noteRecordings } from '../../../shared/noteResources'
 import { useNoteFocus, type FocusReporter } from '../editor/useNoteFocus'
-import { useRecorder } from '../editor/useRecorder'
 import { imageAccept } from '../editor/imageAsset'
-import AudioTranscription from './AudioTranscription'
 import MindMapEditor from './MindMapEditor'
 
 export type QuickKind = 'voice' | 'import' | 'mindmap' | 'whiteboard'
@@ -64,7 +60,6 @@ export default function QuickWorkspaceView({
   }, [draftKey])
   const [draftError, setDraftError] = useState('')
   const update = (change: (current: typeof snapshot) => typeof snapshot): void => {
-    // A recording or transcription can finish after this editor has been left.
     let previous = latest.current
     try { previous = JSON.parse(getVaultSetting(draftKey) ?? 'null') ?? previous }
     catch { /* retain the in-memory copy */ }
@@ -82,43 +77,11 @@ export default function QuickWorkspaceView({
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportStatus, setExportStatus] = useState('')
-  const [seconds, setSeconds] = useState(0)
-  const [selectedRecording, setSelectedRecording] = useState('')
-  const [voiceUrl, setVoiceUrl] = useState('')
-  const [voiceError, setVoiceError] = useState('')
-  const voiceAudio = useRef<HTMLAudioElement>(null)
   const importInput = useRef<HTMLInputElement>(null)
-  const recordings = noteRecordings(snapshot.draft)
-  const currentRecording = recordings.find((item) => item.id === selectedRecording) ?? recordings.at(-1)
-  const voiceId = currentRecording?.assetId
-  const voiceResult = currentRecording?.transcript
-  const recorder = useRecorder((item) => {
-    update((current) => ({
-      ...current,
-      draft: { ...current.draft, recordings: [...noteRecordings(current.draft), item],
-        audioAssetId: item.assetId, audioTranscript: undefined }
-    }))
-    setSelectedRecording(item.id)
-  }, setVoiceError)
   const [root = '中心主题', ...branches] = snapshot.draft.nodes ?? []
   const mindMap: MindMapNode[] = snapshot.draft.mindMap?.length ? snapshot.draft.mindMap :
     [{ id: 'root', label: root }, ...branches.map((label, index) => ({ id: `branch-${index}`, label, parentId: 'root' }))]
   const boardItems = snapshot.draft.boardItems ?? []
-  useEffect(() => {
-    setVoiceUrl('')
-    if (!voiceId) return
-    let cancelled = false
-    void window.liftInk.loadMedia(voiceId).then(({ dataUrl }) => {
-      if (!cancelled) setVoiceUrl(dataUrl)
-    }).catch(() => { if (!cancelled) setVoiceError('无法读取已保存录音') })
-    return () => { cancelled = true }
-  }, [voiceId])
-  useEffect(() => {
-    if (!recorder.recording) return
-    const id = window.setInterval(() => setSeconds((value) => value + 1), 1000)
-    return () => window.clearInterval(id)
-  }, [recorder.recording])
-
   const save = async (): Promise<void> => {
     if (saving) return
     setSaving(true)
@@ -138,41 +101,28 @@ export default function QuickWorkspaceView({
     setExportStatus('')
     try {
       const title = latest.current.title.trim() || label
-      let path: string | null
-      if (kind === 'mindmap') {
-        const byParent = new Map<string | undefined, MindMapNode[]>()
-        for (const node of mindMap) byParent.set(node.parentId, [...(byParent.get(node.parentId) ?? []), node])
-        const visited = new Set<string>()
-        const lines: string[] = []
-        const walk = (parent: string | undefined, depth: number): void => {
-          for (const node of byParent.get(parent) ?? []) {
-            if (visited.has(node.id) || depth > 50) continue
-            visited.add(node.id)
-            lines.push(`${'  '.repeat(depth)}- ${node.label.replace(/\s+/g, ' ').trim()}`)
-            walk(node.id, depth + 1)
-          }
+      const byParent = new Map<string | undefined, MindMapNode[]>()
+      for (const node of mindMap) byParent.set(node.parentId, [...(byParent.get(node.parentId) ?? []), node])
+      const visited = new Set<string>()
+      const lines: string[] = []
+      const walk = (parent: string | undefined, depth: number): void => {
+        for (const node of byParent.get(parent) ?? []) {
+          if (visited.has(node.id) || depth > 50) continue
+          visited.add(node.id)
+          lines.push(`${'  '.repeat(depth)}- ${node.label.replace(/\s+/g, ' ').trim()}`)
+          walk(node.id, depth + 1)
         }
-        walk(undefined, 0)
-        const bytes = new TextEncoder().encode(`# ${title}\n\n${lines.join('\n')}\n`)
-        path = await window.liftInk.saveExport('md', title, base64Of(bytes))
-      } else {
-        const zip = new JSZip()
-        zip.file('速记.txt', latest.current.draft.transcript)
-        for (const [index, item] of recordings.entries()) {
-          const name = `录音-${index + 1}`
-          zip.file(`${name}.webm`, (await window.liftInk.loadMedia(item.assetId)).dataUrl.split(',')[1], { base64: true })
-          if (item.transcript?.text) zip.file(`${name}.txt`, item.transcript.text)
-        }
-        const bytes = await zip.generateAsync({ type: 'uint8array' })
-        path = await window.liftInk.saveExport('zip', title, base64Of(bytes))
       }
+      walk(undefined, 0)
+      const bytes = new TextEncoder().encode(`# ${title}\n\n${lines.join('\n')}\n`)
+      const path = await window.liftInk.saveExport('md', title, base64Of(bytes))
       if (path) setExportStatus('已导出')
     } catch (error) { setExportStatus(`导出失败：${String(error)}`) }
     finally { setExporting(false) }
   }
   const label =
     kind === 'voice'
-      ? '语音速记'
+      ? '旧版语音速记'
       : kind === 'import'
         ? '导入文件'
         : kind === 'mindmap'
@@ -184,7 +134,7 @@ export default function QuickWorkspaceView({
         <button className="back-link" onClick={onBack}>
           <ChevronLeft size={18} /> 返回
         </button>
-        <span>{kind === 'voice' ? '本地录音' : kind === 'import' ? '导入本机文件' : '本地工作区'}</span>
+        <span>{kind === 'import' ? '导入本机文件' : '本地工作区'}</span>
       </header>
       {kind === 'import' ? (
         <div className="import-workspace">
@@ -217,13 +167,13 @@ export default function QuickWorkspaceView({
               />
             </div>
             <div className="recent-heading-actions">
-            {(kind === 'mindmap' || kind === 'voice') && <button className="recent-create recent-create-secondary"
-              disabled={exporting || recorder.recording || recorder.busy} onClick={() => void exportContent()}>
-              <Download size={15} /> {kind === 'mindmap' ? '导出 Markdown 大纲' : '导出录音和文字'}
+            {kind === 'mindmap' && <button className="recent-create recent-create-secondary"
+              disabled={exporting} onClick={() => void exportContent()}>
+              <Download size={15} /> 导出 Markdown 大纲
             </button>}
             <button
               className="recent-create"
-              disabled={saving || recorder.recording || recorder.busy}
+              disabled={saving}
               onClick={() => void save()}
             >
               {initialNote ? '保存修改' : '保存到未分类'}
@@ -232,49 +182,6 @@ export default function QuickWorkspaceView({
           </div>
           {kind === 'voice' ? (
             <div className="voice-workspace">
-              <div className="voice-recorder">
-                <Mic size={31} />
-                <strong>
-                  {String(Math.floor(seconds / 60)).padStart(2, '0')}:
-                  {String(seconds % 60).padStart(2, '0')}
-                </strong>
-                <button disabled={recorder.busy} onClick={() => {
-                  setVoiceError('')
-                  if (recorder.recording) void recorder.stop().catch(() => undefined)
-                  else { setSeconds(0); void recorder.start() }
-                }}>
-                  {recorder.recording ? '停止录音' : recorder.busy ? '处理中…' : '开始录音'}
-                </button>
-                {voiceError && <p role="alert">{voiceError}</p>}
-                {recordings.length > 1 && <select aria-label="选择速记录音" value={currentRecording?.id} onChange={(event) => setSelectedRecording(event.target.value)}>
-                  {recordings.map((item, index) => <option key={item.id} value={item.id}>录音 {index + 1}</option>)}
-                </select>}
-                {voiceUrl && <audio ref={voiceAudio} src={voiceUrl} controls aria-label="语音速记录音" />}
-                {voiceId && voiceUrl && <AudioTranscription key={voiceId} assetId={voiceId} url={voiceUrl} result={voiceResult}
-                  retainResult
-                  onResult={(result) => update((current) => {
-                    const sessions = noteRecordings(current.draft)
-                    const matching = sessions.find((item) => item.id === currentRecording?.id)
-                    if (!matching) return current
-                    const previous = matching.transcript?.text ?? ''
-                    const transcript = previous && current.draft.transcript.includes(previous)
-                      ? current.draft.transcript.replace(previous, result.text)
-                      : [current.draft.transcript.trim(), result.text].filter(Boolean).join('\n\n')
-                    return {
-                      ...current,
-                      draft: { ...current.draft, transcript,
-                        recordings: sessions.map((item) => item.id === matching.id ? { ...item, transcript: result } : item),
-                        audioTranscript: sessions.at(-1)?.id === matching.id ? result : current.draft.audioTranscript }
-                    }
-                  })}
-                  onSeek={(seconds) => {
-                    if (voiceAudio.current) {
-                      voiceAudio.current.currentTime = seconds
-                      void voiceAudio.current.play().catch(() => undefined)
-                    }
-                  }}
-                />}
-              </div>
               <label className="voice-transcript">
                 速记文字
                 <textarea

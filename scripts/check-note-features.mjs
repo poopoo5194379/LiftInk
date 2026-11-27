@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { _electron as electron, expect } from '@playwright/test'
 import { PDFDocument } from 'pdf-lib'
 
@@ -9,12 +9,7 @@ const parent = await realpath(tmpdir())
 const root = await mkdtemp(join(parent, 'liftink-note-features-'))
 const env = { ...process.env, LIFTINK_TEST_DATA_DIR: root }
 const executablePath = process.env.LIFTINK_TEST_PACKAGED_EXE
-const speechLanguage = process.env.LIFTINK_TEST_AUDIO_LANGUAGE === 'zh' ? 'zh' : 'en'
-const expectedSpeech = speechLanguage === 'zh' ? /笔记|你好/ : /orchid|local recording/i
-const args = executablePath ? [] : ['.']
-if (env.LIFTINK_TEST_AUDIO) args.push('--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
-  `--use-file-for-fake-audio-capture=${resolve(env.LIFTINK_TEST_AUDIO)}%noloop`)
-const launch = () => electron.launch({ executablePath, args, env })
+const launch = () => electron.launch({ executablePath, args: executablePath ? [] : ['.'], env })
 const exportPath = join(root, 'editor-check.md')
 let app
 
@@ -86,7 +81,8 @@ try {
   await page.getByRole('button', { name: '新建笔记' }).click()
   await page.getByLabel('笔记标题').fill('OCR scan fixture')
   await page.locator('input[type=file][accept*="application/pdf"]').setInputFiles(pdfPath)
-  await expect(page.getByLabel('笔记画布')).toHaveCount(1)
+  await page.getByRole('dialog', { name: '插入 PDF' }).getByRole('button', { name: '插入 PDF' }).click()
+  await expect(page.getByRole('button', { name: '选择 PDF 原文' })).toBeVisible()
   await page.keyboard.press('Control+f')
   await page.getByRole('button', { name: /OCR 识别扫描页/ }).click({ timeout: 30_000 })
   await expect(page.locator('.editor-ocr-actions [role=status]')).toContainText('1 页识别出文字', { timeout: 60_000 })
@@ -108,30 +104,6 @@ try {
   await expect(page.getByRole('option', { name: /OCR scan fixture.*PDF 正文/ })).toBeVisible()
   await homeSearch.press('Escape')
   await homeSearch.fill('')
-  await expect(page.locator('.word-cloud').getByRole('button', { name: 'orchid', exact: true })).toBeVisible()
-
-  if (env.LIFTINK_TEST_AUDIO) {
-    await page.getByRole('button', { name: '语音速记', exact: true }).click()
-    await page.getByLabel('内容标题').fill('Audio transcript fixture')
-    await page.getByRole('button', { name: '开始录音' }).click()
-    const stop = page.getByRole('button', { name: '停止录音' })
-    await stop.waitFor()
-    await new Promise((resolve) => setTimeout(resolve, 7600))
-    await stop.click()
-    await expect(page.locator('audio')).toBeVisible()
-    await page.getByLabel('转写语言').selectOption(speechLanguage)
-    await page.getByRole('button', { name: '录音转文字' }).click()
-    const transcriptionStatus = page.getByText(/转写失败|转写完成|没有识别出语音/)
-    await transcriptionStatus.waitFor({ timeout: 150_000 })
-    assert.equal(await transcriptionStatus.innerText(), '转写完成')
-    const transcript = page.getByLabel('速记文字')
-    await expect(transcript).toHaveValue(expectedSpeech)
-    const text = await transcript.inputValue()
-    await page.locator('.audio-transcription-segment').first().click()
-    await page.getByRole('button', { name: '保存到未分类' }).click()
-    await page.getByRole('region', { name: '最近文件列表' }).getByText('Audio transcript fixture', { exact: true }).waitFor()
-    console.log(`Recorded audio and transcribed: ${text}`)
-  }
 
   await app.close()
   app = await launch()
@@ -152,15 +124,17 @@ try {
   await search.fill('ORCHID')
   result = page.locator('.editor-pdf-search-results button').first()
   await expect(result).toContainText('ORCHID')
-  if (env.LIFTINK_TEST_AUDIO) {
-    await page.keyboard.press('Escape')
-    await page.getByRole('button', { name: '返回上一页' }).click()
-    await page.getByRole('button', { name: '首页', exact: true }).click()
-    await openRecent('Audio transcript fixture')
-    await expect(page.locator('audio')).toBeVisible()
-    await expect(page.getByLabel('速记文字')).toHaveValue(expectedSpeech)
-    await expect(page.locator('.audio-transcription-segment').first()).toBeVisible()
-  }
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.clipboard, 'writeText', {
+      value: async (value) => { window.auditCopiedText = value }
+    })
+  })
+  await result.click()
+  await page.getByRole('button', { name: '复制当前页 OCR 文字' }).click()
+  await expect(page.getByText('已复制当前页 OCR 文字', { exact: true })).toBeVisible()
+  const copied = await page.evaluate(() => window.auditCopiedText)
+  assert.match(copied, /ORCHID/)
+
   console.log('New note formats and OCR cache verified after restart.')
 } finally {
   if (app) await app.close()

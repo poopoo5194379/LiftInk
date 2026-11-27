@@ -34,7 +34,7 @@ export default function PdfTextOverlay({ page, width, height }: { page: NotePage
       target.style.top = `${(height - viewport.height) / 2}px`
       layer = new TextLayer({ container: target, viewport, textContentSource: source.streamTextContent() })
       await layer.render()
-      if (!disposed && !target.textContent?.trim()) target.setAttribute('data-empty', '该页没有可选原文，可使用 PDF 查找中的 OCR')
+      if (!disposed && !target.textContent?.trim()) target.setAttribute('data-empty', '扫描页可在 PDF 查找中识别并复制文字')
     })().catch(() => { if (!disposed) target.setAttribute('data-empty', '无法加载 PDF 原文') })
     return () => {
       disposed = true

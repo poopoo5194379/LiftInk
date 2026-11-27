@@ -1,16 +1,5 @@
 const saveInterval = 60_000
 const pendingEditors = new Set<() => Promise<void>>()
-const closeTasks = new Set<() => Promise<void>>()
-
-export function onEditorClose(task: () => Promise<void>): () => void {
-  closeTasks.add(task)
-  return () => { closeTasks.delete(task) }
-}
-
-export async function prepareEditorsForClose(): Promise<void> {
-  await Promise.all([...closeTasks].map((task) => task()))
-  await flushEditorSaves()
-}
 
 export async function flushEditorSaves(): Promise<void> {
   while (pendingEditors.size) {

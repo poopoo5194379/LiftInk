@@ -34,7 +34,7 @@ erDiagram
 | `NotePage` | `id,paper,elements[]`，可含尺寸、纸色、图层和书签 | `paper` 支持 `lines/grid/blank/dots`；旧页可以省略纸色和尺寸 |
 | `InkElement` | `kind=ink,id,color,width,points[{x,y,pressure}]` | 颜色 `#RRGGBB`；宽度大于 0、最多 100；点值需有限数 |
 | `ImageElement` | `kind=image,id,assetId,x,y,width,height` | 宽高大于 0 且各不超 20000；资源 ID 需符合哈希+扩展名 |
-| `assets/{hash}.{ext}` | 图片、PDF 原件、录音字节 | 内容以 SHA-256 校验；清理无引用附件前检查文档、恢复副本与草稿 |
+| `assets/{hash}.{ext}` | 图片、PDF 原件、旧版录音字节 | 内容以 SHA-256 校验；原生备份仍支持旧音频。新版已移除录制和转写入口。 |
 | `liftink-vault.json` / `vault-settings.json` | 库 ID、文件格式版本、分区、标签、日程、目标、屏蔽词、速记草稿及最近备份时间 | 原应用的资料库级设置在首次打开默认库时从旧配置导入。设备偏好保留在应用配置。短暂待保存记录按库 ID 和路径隔离 |
 | Electron `userData/active-vault.json` | 本机当前资料库路径和库 ID | 切换前验证目录；选中的目录不可用时显示恢复入口 |
 | `liftink-snapshot.json` | 快照版本、库 ID、文件相对路径、字节数和 SHA-256 | 位于独立快照目录；恢复交给应用逐文件校验，原快照不会被打开为工作库 |

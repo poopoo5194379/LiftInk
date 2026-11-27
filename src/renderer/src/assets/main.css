@@ -39,7 +39,7 @@ input:focus-visible {
   inset: 0 0 auto 240px;
   height: 270px;
   pointer-events: none;
-  background: url('/mountains.svg') center top/cover no-repeat;
+  width: 100%;
   opacity: 0.9;
 }
 .navigation,
@@ -706,6 +706,17 @@ input:focus-visible {
 }
 .dialog-content h2 {
   margin: 0 0 15px;
+}
+.dialog-content.global-search-dialog {
+  top: min(16vh, 112px);
+  transform: translateX(-50%);
+  width: min(640px, 90vw);
+}
+.global-search-dialog .search-results {
+  position: static;
+  margin-top: 8px;
+  max-height: 50vh;
+  overflow: auto;
 }
 .dialog-content p {
   color: #5d6580;

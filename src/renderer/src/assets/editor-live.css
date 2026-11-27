@@ -35,7 +35,9 @@
 .editor-color-options,
 .editor-eraser-options { display: grid; gap: 5px; }
 .editor-color-options { grid-template-columns: repeat(4, 1fr); }
-.editor-eraser-options { grid-template-columns: repeat(3, 1fr); }
+.editor-eraser-options { grid-template-columns: repeat(3, 1fr) 1.5fr; }
+.editor-eraser-settings { display: grid; gap: 10px; }
+.editor-eraser-settings input[type='number'] { width: 92px; }
 .editor-tool-popover button {
   display: grid;
   place-items: center;
@@ -50,7 +52,6 @@
 .editor-tool-popover button[aria-pressed="true"] { border-color: #8068c6; background: #f1ebfb; }
 .editor-color-options button span { width: 22px; height: 22px; border-radius: 50%; }
 .highlight-swatch { opacity: 0.62; }
-.editor-eraser-options button span { border: 1px solid currentColor; border-radius: 50%; }
 .editor-eraser-size { font-size: 11px; font-variant-numeric: tabular-nums; }
 .editor-custom-color { display: flex; align-items: center; justify-content: space-between; }
 .editor-custom-color input { width: 32px; height: 24px; cursor: pointer; }
@@ -387,6 +388,7 @@
 .editor-dual-side-label { display: flex; align-items: center; min-height: 46px; padding: 0 12px; border-bottom: 1px solid #e8e5ef; background: #fffdfdf0; font-size: 13px; color: #57536a; }
 .editor-dual-close { margin-left: auto; padding: 2px 6px; font-size: 22px; line-height: 1; }
 .editor-dual-page { display: block; width: 100%; min-height: 0; flex: 1; object-fit: contain; border: 1px solid #e6e1ed; box-shadow: 0 4px 14px #4540591a; }
+.editor-body [data-image-drop='true'] { outline: 2px solid #7059c6; outline-offset: -2px; }
 .editor-dual-excerpt { padding: 5px 9px; border-radius: 7px; color: #65529e; background: #ebe4f7; white-space: nowrap; }
 .editor-export-backdrop { position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center; background: #23203688; }
 .editor-export-dialog { width: min(440px, 94vw); display: flex; flex-direction: column; gap: 16px; padding: 22px; border: 1px solid #e8e2f0; border-radius: 14px; background: #fff; box-shadow: 0 24px 70px #1d173760; }
@@ -479,25 +481,6 @@
 .markdown-image-select { min-width: 0; display: block; border: 1px solid transparent; border-radius: 6px; overflow: hidden; }
 .markdown-image-select img { display: block; width: auto; height: auto; max-width: 100%; max-height: 560px; object-fit: contain; }
 .markdown-image.selected .markdown-image-select { border-color: #8067be; outline: 2px solid #cdbbe9; }
-.audio-transcription {
-  padding: 9px 14px;
-  background: #faf8fd;
-  border-bottom: 1px solid #e7e1ef;
-  color: #514760;
-  font-size: 12px;
-}
-.audio-transcription-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.audio-transcription-actions select, .audio-transcription-actions button, .audio-transcription-body > button:first-child, .editor-audio-toggle {
-  padding: 5px 8px;
-  border-radius: 5px;
-  background: #eee7f8;
-  color: #604d93;
-}
-.audio-transcription-body { display: grid; justify-items: start; gap: 4px; max-height: 160px; overflow: auto; margin-top: 8px; }
-.audio-transcription-segment { display: flex; gap: 8px; align-items: baseline; text-align: left; padding: 5px; border-radius: 5px; }
-.audio-transcription-segment:hover { background: #eee7f8; }
-.audio-transcription-segment time { color: #6c5793; font-variant-numeric: tabular-nums; }
-.voice-recorder audio { max-width: 100%; }
 .pdf-selectable-text {
   position: absolute;
   z-index: 4;

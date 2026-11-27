@@ -6,20 +6,32 @@ type ButtonProps = React.ComponentPropsWithRef<'button'> & {
   label?: string
 }
 
-export function BrushWidthControl({ value, min, max, onChange }: {
-  value: number; min: number; max: number; onChange: (width: number) => void
+export function BrushWidthControl({ value, min, max, label = '笔宽', logarithmic = false, step = 0.1, onChange }: {
+  value: number; min: number; max: number; label?: string; logarithmic?: boolean; step?: number
+  onChange: (width: number) => void
 }): React.JSX.Element {
-  const [draft, setDraft] = useState(String(value))
+  const [input, setInput] = useState<{ value: number; text: string }>()
+  const scaled = logarithmic && max > min
+  const sliderValue = scaled ? Math.round(100 * Math.log(value / min) / Math.log(max / min)) : value
   return <div className="editor-brush-settings">
-    <label>笔宽 <output>{value} px</output><input aria-label="笔宽滑块" type="range" min={min} max={max} step={0.1}
-      value={value} onChange={(event) => { onChange(event.target.valueAsNumber); setDraft(event.target.value) }} /></label>
-    <label>精确笔宽 <input aria-label="精确笔宽" type="number" min={min} max={max} step={0.1} value={draft}
+    <label>{label} <output>{value} px</output><input aria-label={`${label}滑块`} aria-valuetext={`${value} 像素`}
+      type="range" min={scaled ? 0 : min} max={scaled ? 100 : max} step={scaled ? 1 : step}
+      value={sliderValue} onChange={(event) => {
+        const position = event.target.valueAsNumber
+        onChange(scaled ? Math.round(min * (max / min) ** (position / 100)) : position)
+        setInput(undefined)
+      }} /></label>
+    <label>精确{label} <input aria-label={`精确${label}`} type="number" min={min} max={max} step={step}
+      value={input?.value === value ? input.text : value}
       onChange={(event) => {
         const width = event.target.valueAsNumber
-        setDraft(event.target.value)
-        if (Number.isFinite(width) && width >= min && width <= max) onChange(width)
+        if (Number.isFinite(width) && width >= min && width <= max) {
+          const next = step === 1 ? Math.round(width) : width
+          onChange(next)
+          setInput({ value: next, text: event.target.value })
+        } else setInput({ value, text: event.target.value })
       }}
-      onBlur={() => setDraft(String(value))} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} /></label>
+      onBlur={() => setInput(undefined)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} /></label>
   </div>
 }
 

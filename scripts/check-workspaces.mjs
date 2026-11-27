@@ -32,18 +32,7 @@ try {
   assert.match(await page.getByRole('button', { name: '笔记位置' }).innerText(), /视觉研究/)
   await page.getByRole('button', { name: '返回上一页' }).click()
 
-  await page.getByRole('button', { name: '语音速记', exact: true }).click()
-  assert.equal(await page.getByRole('region', { name: '语音速记页面' }).isVisible(), true)
-  await page.getByRole('textbox', { name: '速记文字' }).fill('今天讨论了新的首页布局。')
-  await page.getByRole('button', { name: '保存到未分类' }).click()
-  assert.equal(await page.getByRole('region', { name: '最近文件列表' }).isVisible(), true)
-  await page.locator('.recent-file-row').first().click()
-  assert.equal(
-    await page.getByRole('textbox', { name: '速记文字' }).inputValue(),
-    '今天讨论了新的首页布局。'
-  )
-  await page.getByRole('button', { name: '返回', exact: true }).click()
-  await page.getByRole('button', { name: '返回首页' }).click()
+  assert.equal(await page.getByRole('button', { name: '语音速记', exact: true }).count(), 0)
 
   if (!(await page.getByRole('button', { name: '新建思维导图', exact: true }).isVisible())) {
     await page.getByRole('button', { name: '更多操作', exact: true }).click()
@@ -62,7 +51,7 @@ try {
   assert.equal(await page.getByRole('region', { name: '导入 PDF / 图片页面' }).isVisible(), true)
   assert.equal(await page.locator('.import-workspace input[type=file][multiple]').count(), 1)
   console.log(
-    'Workspaces passed: Home, Tags, agenda, folder picker, voice, map, board and import entry'
+    'Workspaces passed: Home, Tags, agenda, folder picker, map, board and import entry'
   )
 } finally {
   await app.close()

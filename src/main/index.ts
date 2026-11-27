@@ -9,7 +9,6 @@ import { MAX_PDF_BYTES } from '../shared/editor'
 import type { AppDiagnostics, CapturedScreen, OpenedPdf, StoredImage, StoredMedia } from '../shared/editor'
 import { NoteStore, replaceAtomic, validDocument, validNoteId, validNoteRecord } from './storage'
 import { loadNativePdfText, loadPdfOcr, recognizeInk, recognizePdfPage, saveNativePdfText, savePdfOcr } from './pdfOcr'
-import { transcribeAudio } from './transcription'
 import { copyVault, createVault, independentParent, loadVaultSettings, readVault, saveVaultSettings, seedVault, verifyVault } from './vault'
 import type { VaultOperation } from '../shared/vault'
 
@@ -503,8 +502,6 @@ if (hasInstanceLock) void app.whenReady().then(async () => {
   handleVault('liftink:recognize-ink', (_event, image: unknown) => recognizeInk(storageRoot(), image))
   handleVault('liftink:recognize-pdf-page', (_event, id: unknown, page: unknown, image: unknown, width: unknown, height: unknown, refresh: unknown) =>
     recognizePdfPage(storageRoot(), id, page, image, width, height, refresh))
-  handleVault('liftink:transcribe-audio', (_event, id: unknown, waveform: unknown, language: unknown) =>
-    transcribeAudio(storageRoot(), id, waveform, language))
   handleVault('liftink:save-document', (_event, document: unknown) =>
     noteStore.saveDocument(document)
   )

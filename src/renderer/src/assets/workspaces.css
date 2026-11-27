@@ -704,49 +704,16 @@
 }
 .voice-workspace {
   display: grid;
-  grid-template-columns: minmax(250px, 1fr) minmax(300px, 1.4fr);
-  gap: 18px;
   flex: 1;
   min-height: 0;
   padding: 0 28px 24px;
 }
-.voice-recorder,
 .voice-transcript,
 .mindmap-canvas,
 .whiteboard-canvas {
   border: 1px solid #e5e1eb;
   border-radius: 14px;
   background: #fff;
-}
-.voice-recorder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 17px;
-  padding: 22px;
-  text-align: center;
-}
-.voice-recorder svg {
-  color: #8b6bc0;
-}
-.voice-recorder strong {
-  font-size: 37px;
-  line-height: 42px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.voice-recorder button {
-  padding: 9px 18px;
-  border-radius: 8px;
-  background: #6d56c5;
-  color: white;
-}
-.voice-recorder p {
-  max-width: 260px;
-  color: #858195;
-  font-size: 12px;
-  line-height: 1.6;
 }
 .voice-transcript {
   display: flex;
@@ -983,12 +950,7 @@
 .app-shell :is(.new-note, .recent-create, .calendar-grid .selected-day) { background: var(--liftink-accent); color: #fff; }
 .app-shell .recent-create.recent-create-secondary { color: var(--liftink-accent); background: color-mix(in srgb, var(--liftink-accent) 10%, white); }
 .agenda-date-dot { background: var(--liftink-accent); }
-:root[data-theme='dark'] { color-scheme: dark; color: #eee9f7; background: #201b28; }
-:root[data-theme='dark'] :is(.app-shell, .navigation, .schedule-sidebar, .workspace, .editor-view, .editor-canvas) { background: #201b28; color: #eee9f7; }
-:root[data-theme='dark'] :is(.glass, .settings-categories, .editor-topbar, .editor-toolbox, .editor-statusbar, .editor-page-manager, .editor-dual-config, .agenda-date-panel, .agenda-timeline-panel, .agenda-overview > div, .recent-file-row, .search-box, .editor-tool-popover, .editor-tooltip, .editor-export-dialog) { background: #30283b; color: #eee9f7; border-color: #493d56; }
 :root[data-theme='dark'] :is(.library-heading, .library-setting, .preference-row, .editor-document, .editor-top-actions, .editor-statusbar, .nav-item, .file-main, .agenda-panel-heading, .agenda-date-list, .calendar-head, .calendar-grid, .keyword-footnote) :is(h1,h2,h3,p,input,strong,small,span,button) { color: inherit; }
-:root[data-theme='dark'] :is(.form-field input, .form-field select, .preference-row select, .preference-row input[type='number']) { background: #211a2b; color: #eee9f7; border-color: #58466a; }
-:root[data-theme='dark'] :is(.agenda-month-grid button.selected, .agenda-month-picker button.selected, .settings-categories button[aria-pressed='true']) { background: #47345d; color: #f2eaff; }
 @media (max-width: 1120px) {
   .library-settings .library-settings-grid { grid-template-columns: 1fr; }
 }

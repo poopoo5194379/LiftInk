@@ -2,7 +2,7 @@
 // only when a later feature requires them.
 import { contextBridge, ipcRenderer } from 'electron'
 import type { VaultOperation, VaultSettings } from '../shared/vault'
-import type { AppDiagnostics, AudioTranscript, CapturedScreen, NoteDocument, NoteRecord, OpenedPdf, PdfOcrPage, SpeechLanguage, StorageInfo, StoredImage, StoredMedia } from '../shared/editor'
+import type { AppDiagnostics, CapturedScreen, NoteDocument, NoteRecord, OpenedPdf, PdfOcrPage, StorageInfo, StoredImage, StoredMedia } from '../shared/editor'
 
 let flushEditor: (() => Promise<void>) | undefined
 ipcRenderer.on('liftink:prepare-close', (_event, request: string) => {
@@ -52,8 +52,6 @@ contextBridge.exposeInMainWorld('liftInk', {
   recognizeInk: (image: string): Promise<string> => ipcRenderer.invoke('liftink:recognize-ink', image),
   recognizePdfPage: (id: string, page: number, image: string, width: number, height: number, refresh = false): Promise<PdfOcrPage> =>
     ipcRenderer.invoke('liftink:recognize-pdf-page', id, page, image, width, height, refresh),
-  transcribeAudio: (assetId: string, waveform: Float32Array, language: SpeechLanguage): Promise<AudioTranscript> =>
-    ipcRenderer.invoke('liftink:transcribe-audio', assetId, waveform, language),
   saveDocument: (document: NoteDocument): Promise<void> =>
     ipcRenderer.invoke('liftink:save-document', document),
   validateDocument: (document: NoteDocument): Promise<boolean> =>

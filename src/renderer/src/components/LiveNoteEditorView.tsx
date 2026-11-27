@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useId, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
   Activity,
@@ -36,8 +36,6 @@ import {
   EyeOff,
   LockKeyhole,
   LockKeyholeOpen,
-  Mic,
-  Square,
   PanelRightClose,
   PanelRightOpen,
   PenLine,
@@ -72,9 +70,7 @@ import { useNoteFocus } from '../editor/useNoteFocus'
 import { focusTotal, formatDuration } from '../editor/noteActivity'
 import { distanceToSegment, splitInk, insidePolygon, elementBounds, moveElement, scaleElement } from '../editor/geometry'
 import { base64Of, loadReferencedAssets, readPortable, restoreReferencedAssets } from '../editor/portable'
-import { draftText, noteRecordings, richNodes } from '../../../shared/noteResources'
-import { useRecorder } from '../editor/useRecorder'
-import AudioTranscription from './AudioTranscription'
+import { draftText, richNodes } from '../../../shared/noteResources'
 import type {
   CapturedScreen,
   CanvasTextFont,
@@ -108,6 +104,7 @@ type NotePreview = {
   workspace?: NoteRecord['workspace']
   draft?: NoteRecord['draft']
 }
+type ImageDrop = (pageId: string, images: ImageElement[], urls: Record<string, string>) => Promise<void>
 type Props = {
   note: NotePreview
   folders: string[]
@@ -129,6 +126,8 @@ type Props = {
   focusNoteId?: string
   embedded?: boolean
   requestedPageId?: string
+  imageDropRef?: React.Ref<ImageDrop>
+  highlightedDropPage?: string
   renderCompanion?: (id: string, close: () => void) => React.ReactNode
   initialCountdown?: number
   onCountdownComplete?: () => void
@@ -247,6 +246,8 @@ export default function LiveNoteEditorView({
   focusNoteId,
   embedded = false,
   requestedPageId,
+  imageDropRef,
+  highlightedDropPage,
   onChangeOtherNote
 }: Props): React.JSX.Element {
   const [tool, setTool] = useState<Tool>('pen')
@@ -257,7 +258,7 @@ export default function LiveNoteEditorView({
   const [penStyle, setPenStyle] = useState<PenStyle>(preferences.penStyle)
   const [stability, setStability] = useState(preferences.stability)
   const [pressureCurve, setPressureCurve] = useState(preferences.pressureCurve)
-  const [eraserRadius, setEraserRadius] = useState(12)
+  const [eraserSize, setEraserSize] = useState<number | 'page'>(24)
   const [toolPanel, setToolPanel] = useState<{ kind: ToolPanel; anchor: HTMLButtonElement } | null>(null)
   const [inkComparisonOpen, setInkComparisonOpen] = useState(false)
   const lastInkTrace = useRef<InkTrace | null>(null)
@@ -285,7 +286,11 @@ export default function LiveNoteEditorView({
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [lassoPoints, setLassoPoints] = useState<InkPoint[]>([])
   const [dragPreview, setDragPreview] = useState({ dx: 0, dy: 0 })
-  const [pageTransfer, setPageTransfer] = useState<{ from: string; to: string; objects: PageElement[] } | null>(null)
+  const [pageTransfer, setPageTransfer] = useState<{ from: string; to: string; objects: PageElement[]; reference?: boolean } | null>(null)
+  const [companionDropPage, setCompanionDropPage] = useState<string>()
+  const companionPanel = useRef<HTMLElement>(null)
+  const companionImageDrop = useRef<ImageDrop>(null)
+  const imageMoveSaving = useRef(false)
   const dragScrollFrame = useRef(0)
   const [pageToDelete, setPageToDelete] = useState<string | null>(null)
   const [shapePreview, setShapePreview] = useState<Drag | null>(null)
@@ -317,10 +322,6 @@ export default function LiveNoteEditorView({
   const [countdownMinutes, setCountdownMinutes] = useState(initialCountdown ?? 25)
   const [countdownEnd, setCountdownEnd] = useState<number | null>(null)
   const [countdownLeft, setCountdownLeft] = useState<number | null>(null)
-  const [recordingId, setRecordingId] = useState('')
-  const [audioSource, setAudioSource] = useState<{ id: string; url: string } | null>(null)
-  const [transcriptOpen, setTranscriptOpen] = useState(false)
-  const [playbackMs, setPlaybackMs] = useState(0)
   const [assetUrls, setAssetUrls] = useState<Record<string, string>>({})
   const [missingAssets, setMissingAssets] = useState<Set<string>>(new Set())
   const [recoveryNotice, setRecoveryNotice] = useState('')
@@ -342,35 +343,19 @@ export default function LiveNoteEditorView({
   const saveSequence = useRef(0)
   const draftPersisted = useRef(false)
   const editorRoot = useRef<HTMLElement>(null)
-  const pendingSeek = useRef<{ id: string; seconds: number } | null>(null)
-  const audioRef = useRef<HTMLAudioElement>(null)
   const keysRef = useRef({ space: false, alt: false })
   const page = document?.pages.find((item) => item.id === pageId) ?? document?.pages[0]
+  const eraserLimit = (target?: NotePage): number => {
+    const { width, height } = pageSize(target ?? {})
+    return Math.max(4, Math.ceil(Math.hypot(width, height)))
+  }
+  const eraserDiameterFor = (target?: NotePage): number => {
+    const limit = eraserLimit(target)
+    return eraserSize === 'page' ? limit : Math.min(eraserSize, limit)
+  }
+  const eraserDiameter = eraserDiameterFor(page)
+  const maxEraserDiameter = eraserLimit(page)
   const documentReady = document !== null
-  const recordings = noteRecordings(document ?? {})
-  const activeRecording = recordings.find((item) => item.id === recordingId) ?? recordings.at(-1)
-  const audioUrl = audioSource && audioSource.id === activeRecording?.id ? audioSource.url : ''
-  const recordingAsset = activeRecording?.assetId
-  const activeRecordingId = activeRecording?.id
-  useEffect(() => {
-    if (!recordingAsset || !activeRecordingId) return
-    let cancelled = false
-    void window.liftInk.loadMedia(recordingAsset).then(({ dataUrl }) => {
-      if (!cancelled) { setAudioSource({ id: activeRecordingId, url: dataUrl }); setPlaybackMs(0) }
-    }).catch((error) => { if (!cancelled) setSaveState(`录音资源缺失：${String(error)}`) })
-    return () => { cancelled = true }
-  }, [recordingAsset, activeRecordingId])
-  const recorder = useRecorder(async (session, media) => {
-    const history = historyRef.current
-    if (!history) return
-    const current = history.current
-    setRecordingId(session.id)
-    setAudioSource({ id: session.id, url: media.dataUrl })
-    publish(history.replace({ ...current, recordings: [...noteRecordings(current), session],
-      audioAssetId: session.assetId, audioStartedAt: session.startedAt, audioTranscript: undefined }))
-    await autosave.flush()
-  }, setSaveState)
-  const recording = recorder.recording
   const layers = page?.layers ?? [{ id: 'base', name: '内容', visible: true, locked: false }]
   const activeLayer = layers.find((layer) => layer.id === activeLayerId) ?? layers[0]
   const canEdit = (element: PageElement, targetPage: NotePage): boolean => {
@@ -525,6 +510,29 @@ export default function LiveNoteEditorView({
       } else saveLatest(next)
     }
   }
+  useImperativeHandle(imageDropRef, () => async (targetId, images, urls) => {
+    const history = historyRef.current
+    const target = history?.current.pages.find((item) => item.id === targetId)
+    if (!history || !target || imageMoveSaving.current) throw new Error('右侧页面不可用')
+    const writable = target.layers?.filter((layer) => layer.visible && !layer.locked)
+    const layer = writable?.find((item) => item.id === 'base') ?? writable?.[0]
+    if (target.layers?.length && !layer) throw new Error('右侧页面没有可写入的图层')
+    imageMoveSaving.current = true
+    try {
+      const updates = images.map((image) => {
+        const id = crypto.randomUUID()
+        return { id, after: { ...image, id, layerId: layer?.id ?? 'base' } }
+      })
+      setAssetUrls((current) => ({ ...current, ...urls }))
+      const next = history.changeElements(targetId, updates)
+      publish(next)
+      try { await autosave.flush() }
+      catch (error) {
+        if (history.current === next) publish(history.undo())
+        throw error
+      }
+    } finally { imageMoveSaving.current = false }
+  })
   const undo = (): void => {
     if (historyRef.current?.canUndo) {
       const next = historyRef.current.undo()
@@ -1173,7 +1181,7 @@ export default function LiveNoteEditorView({
       }
     } else if (drawingTool === 'eraser') {
       const candidates = targetPage.elements.flatMap((stroke) => stroke.kind === 'ink' && canEdit(stroke, targetPage) ? [{ stroke, bounds: elementBounds(stroke) }] : [])
-      const drag: EraseDrag = { kind: 'erase', id: event.pointerId, pageId: targetPage.id, previous: point, radius: eraserRadius, fragments: new Map(), candidates }
+      const drag: EraseDrag = { kind: 'erase', id: event.pointerId, pageId: targetPage.id, previous: point, radius: eraserDiameterFor(targetPage) / 2, fragments: new Map(), candidates }
       dragRef.current = drag
       eraseAt(drag, point)
       setHover({ pageId: targetPage.id, point })
@@ -1257,7 +1265,12 @@ export default function LiveNoteEditorView({
     for (const { stroke, bounds } of drag.candidates) {
       if (bounds.x > right || bounds.y > bottom || bounds.x + bounds.width < left || bounds.y + bounds.height < top) continue
       const previousPieces = drag.fragments.get(stroke.id) ?? [stroke]
-      const pieces = previousPieces.flatMap((piece) => splitInk(piece, [previous, point], radius))
+      if (!previousPieces.length) continue
+      const farX = Math.max(Math.abs(bounds.x - point.x), Math.abs(bounds.x + bounds.width - point.x))
+      const farY = Math.max(Math.abs(bounds.y - point.y), Math.abs(bounds.y + bounds.height - point.y))
+      const pieces = Math.hypot(farX, farY) <= radius
+        ? []
+        : previousPieces.flatMap((piece) => splitInk(piece, [previous, point], radius))
       if (pieces.length !== previousPieces.length || pieces.some((piece, index) => piece !== previousPieces[index])) {
         changed = true
         drag.fragments.set(stroke.id, pieces)
@@ -1271,7 +1284,7 @@ export default function LiveNoteEditorView({
     if (!history?.current.pages.some((entry) => entry.id === drag.pageId) || !isMeaningfulInk(points, drag.stylus)) return
     const stroke: InkElement = {
       kind: 'ink', id: crypto.randomUUID(), ...drag.brush, points,
-      recordedAt: Date.now(), layerId: drag.layerId
+      layerId: drag.layerId
     }
     publish(history.changeElements(drag.pageId, [{ id: stroke.id, after: stroke }]), true)
   }
@@ -1299,10 +1312,12 @@ export default function LiveNoteEditorView({
     setLassoPoints([])
     setDragPreview({ dx: 0, dy: 0 })
     setPageTransfer(null)
+    setCompanionDropPage(undefined)
     setShapePreview(null)
   }
   const selectionMove = (drag: Extract<Drag, { kind: 'selection' }>, clientX: number, clientY: number, source: SVGSVGElement): {
     dx: number; dy: number; transfer: typeof pageTransfer; outside: boolean; transferable: boolean
+    companion?: { pageId: string; images: ImageElement[]; canvas: SVGSVGElement }
   } => {
     const pages = historyRef.current?.current.pages ?? []
     const from = pages.find((entry) => entry.id === drag.pageId)
@@ -1311,15 +1326,44 @@ export default function LiveNoteEditorView({
     const bounds = source.getBoundingClientRect()
     const dx = (clientX - bounds.left) / bounds.width * source.viewBox.baseVal.width - drag.start.x
     const dy = (clientY - bounds.top) / bounds.height * source.viewBox.baseVal.height - drag.start.y
-    const paper = window.document.elementFromPoint(clientX, clientY)?.closest('.editor-paper')
-    const dest = paper && scrollRef.current?.contains(paper) ? paper.querySelector<SVGSVGElement>('svg[data-page-id]') : null
-    const to = pages.find((entry) => entry.id === dest?.dataset.pageId)
+    const hovered = window.document.elementFromPoint(clientX, clientY)
+    const paper = hovered?.closest('.editor-paper')
+    const reference = hovered?.closest<SVGSVGElement>('svg[data-reference-page]')
+    const overCompanion = hovered && companionPanel.current?.contains(hovered)
+    const sameNoteReference = overCompanion && reference && objects.every((element) => element.kind === 'image') ? reference : null
+    const dest = sameNoteReference ??
+      (paper && scrollRef.current?.contains(paper) ? paper.querySelector<SVGSVGElement>('svg[data-page-id]') : null)
+    const to = pages.find((entry) => entry.id === (dest?.dataset.referencePage ?? dest?.dataset.pageId))
+    if (overCompanion && companionImageDrop.current && objects.length &&
+        objects.every((element): element is ImageElement => element.kind === 'image') &&
+        !historyRef.current?.current.excerpts?.some((entry) => drag.ids.includes(entry.elementId))) {
+      const right = paper?.querySelector<SVGSVGElement>('svg[data-page-id]')
+      const pageId = right?.dataset.pageId
+      const matrix = right?.getScreenCTM()
+      if (right && pageId && matrix) {
+        const anchor = new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse())
+        const { width, height } = right.viewBox.baseVal
+        const images = objects.map((image) => {
+          const scale = Math.min(1, width / image.width, height / image.height)
+          const w = image.width * scale
+          const h = image.height * scale
+          return { ...image, width: w, height: h,
+            x: Math.max(0, Math.min(width - w, anchor.x + (image.x - drag.start.x) * scale)),
+            y: Math.max(0, Math.min(height - h, anchor.y + (image.y - drag.start.y) * scale)) }
+        })
+        return { dx, dy, transfer: null, outside: true, transferable, companion: { pageId, images, canvas: right } }
+      }
+    }
     let transfer: typeof pageTransfer = null
     if (from && dest && to && to.id !== from.id && transferable) {
       const rect = dest.getBoundingClientRect()
       const { width, height } = pageSize(to)
-      const targetX = (clientX - rect.left) / rect.width * width
-      const targetY = (clientY - rect.top) / rect.height * height
+      const matrix = sameNoteReference?.getScreenCTM()
+      const anchor = matrix ? new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse()) : null
+      const targetX = anchor?.x ?? (clientX - rect.left) / rect.width * width
+      const targetY = anchor?.y ?? (clientY - rect.top) / rect.height * height
+      if (sameNoteReference && (targetX < 0 || targetX > width || targetY < 0 || targetY > height))
+        return { dx, dy, transfer: null, outside: true, transferable }
       const moved = objects.flatMap((element) => {
         const layerId = element.layerId ?? 'base'
         const unlocked = to.layers?.filter((layer) => layer.visible && !layer.locked)
@@ -1333,13 +1377,14 @@ export default function LiveNoteEditorView({
         }
         return [{ ...after, layerId: layer?.id ?? 'base' }]
       })
-      if (moved.length === objects.length) transfer = { from: from.id, to: to.id, objects: moved }
+      if (moved.length === objects.length) transfer = { from: from.id, to: to.id, objects: moved, reference: !!sameNoteReference }
     }
     return { dx, dy, transfer, outside: dest !== source, transferable }
   }
   const previewSelectionMove = (drag: Extract<Drag, { kind: 'selection' }>, x: number, y: number, source: SVGSVGElement): boolean => {
-    const { dx, dy, transfer, transferable, outside } = selectionMove(drag, x, y, source)
+    const { dx, dy, transfer, transferable, outside, companion } = selectionMove(drag, x, y, source)
     setPageTransfer(transfer)
+    setCompanionDropPage(companion?.pageId)
     setDragPreview(transfer || (transferable && outside) ? { dx: 0, dy: 0 } : { dx, dy })
     return transferable
   }
@@ -1479,11 +1524,33 @@ export default function LiveNoteEditorView({
         setSelectedId(ids.length === 1 ? ids[0] : null)
       }
     } else if (drag.kind === 'selection') {
-      const { dx, dy, transfer, outside, transferable } = selectionMove(drag, event.clientX, event.clientY, event.currentTarget)
+      const { dx, dy, transfer, outside, transferable, companion } = selectionMove(drag, event.clientX, event.clientY, event.currentTarget)
       const destination = historyRef.current.current.pages.find((entry) => entry.id === transfer?.to)
-      if (transfer && destination) {
+      if (companion && !imageMoveSaving.current) {
+        const history = historyRef.current
+        const sources = targetPage.elements.filter((element) => drag.ids.includes(element.id))
+        imageMoveSaving.current = true
+        void (async () => {
+          try {
+            const urls = Object.fromEntries(await Promise.all(companion.images.map(async (image) => [
+              image.assetId, assetUrls[image.assetId] ?? (await window.liftInk.loadImage(image.assetId)).dataUrl
+            ] as const)))
+            const drop = companionImageDrop.current
+            if (!drop || !companion.canvas.isConnected) throw new Error('右侧笔记已切换')
+            await drop(companion.pageId, companion.images, urls)
+            const latest = history.current.pages.find((entry) => entry.id === targetPage.id)
+            if (!editorRoot.current || !latest || !sources.every((element) => latest.elements.includes(element))) return
+            publish(history.changeElements(targetPage.id, sources.map(({ id }) => ({ id, after: null }))))
+            setSelectedIds([])
+            setSelectedId(null)
+            await autosave.flush()
+          } catch (error) { setSaveState(`跨栏移动未完成：${String(error)}`) }
+          finally { imageMoveSaving.current = false }
+        })()
+      } else if (transfer && destination) {
         publish(historyRef.current.transferObjects(targetPage, destination, transfer.objects))
-        setPageId(destination.id)
+        if (transfer.reference) { setSelectedIds([]); setSelectedId(null) }
+        else setPageId(destination.id)
       } else if ((!transferable || !outside) && Math.hypot(dx, dy) > 0.5) {
         publish(historyRef.current.changeElements(targetPage.id, drag.ids.flatMap((id) => {
           const element = targetPage.elements.find((entry) => entry.id === id)
@@ -1525,34 +1592,15 @@ export default function LiveNoteEditorView({
     clearPointerPreview()
     setHover(null)
   }
-  const seekAudioAt = (event: React.MouseEvent<SVGSVGElement>): void => {
-    if (!document) return
+  const editCanvasText = (event: React.MouseEvent<SVGSVGElement>): void => {
+    if (!document || tool !== 'select') return
     const targetPage = document.pages.find((entry) => entry.id === event.currentTarget.dataset.pageId)
     if (!targetPage) return
     const rect = event.currentTarget.getBoundingClientRect()
     const { width, height } = event.currentTarget.viewBox.baseVal
     const point = { x: ((event.clientX - rect.left) / rect.width) * width, y: ((event.clientY - rect.top) / rect.height) * height, pressure: 0.5 }
-    if (tool === 'select') {
-      const text = hitText(point, targetPage, event.target)
-      if (text) { editText(text, targetPage.id); return }
-    }
-    const stroke = hitInk(point, targetPage)
-    if (stroke?.recordedAt) seekRecordedStroke(stroke.recordedAt)
-  }
-  const playAt = (seconds: number): void => {
-    if (!audioRef.current) return
-    audioRef.current.currentTime = seconds
-    void audioRef.current.play().catch(() => undefined)
-  }
-  const seekRecordedStroke = (timestamp: number): void => {
-    const session = recordings.findLast((item) => item.startedAt <= timestamp && (item.endedAt === undefined || item.endedAt >= timestamp))
-    if (!session) return
-    const seconds = (timestamp - session.startedAt) / 1000
-    if (session.id === activeRecordingId && audioRef.current) playAt(seconds)
-    else {
-      pendingSeek.current = { id: session.id, seconds }
-      setRecordingId(session.id)
-    }
+    const text = hitText(point, targetPage, event.target)
+    if (text) editText(text, targetPage.id)
   }
   const transformSelection = (action: 'copy' | 'smaller' | 'larger' | 'delete'): void => {
     if (!page || !historyRef.current || !selectedIds.length) return
@@ -1642,9 +1690,9 @@ export default function LiveNoteEditorView({
           fill={element.color}
           opacity={inkOpacity(element)}
           style={multiply && isHighlighter(element) ? { mixBlendMode: 'multiply' } : undefined}
-          stroke={activeRecording && playbackMs > 0 && element.recordedAt && Math.abs(element.recordedAt - activeRecording.startedAt - playbackMs) < 2200 ? '#b293f0' : undefined}
+
           strokeWidth="2"
-          onDoubleClick={() => { if (element.recordedAt) seekRecordedStroke(element.recordedAt) }}
+
         />
       )
     }
@@ -1702,7 +1750,7 @@ export default function LiveNoteEditorView({
   }
   const renderCanvasElements = (canvasPage: NotePage, band: ReturnType<typeof pagePaintBand>, multiply = false): React.JSX.Element[] => {
     const size = pageSize(canvasPage)
-    const incoming = pageTransfer?.to === canvasPage.id ? pageTransfer.objects : []
+    const incoming = pageTransfer?.to === canvasPage.id && !pageTransfer.reference ? pageTransfer.objects : []
     return [...canvasPage.elements, ...incoming].filter((element) => pagePaintBand(element) === band && isVisible(element, canvasPage)
       && !(pageTransfer?.from === canvasPage.id && selectedIds.includes(element.id))).map((element) => {
       const current = canvasPage.id === pageId
@@ -1729,6 +1777,13 @@ export default function LiveNoteEditorView({
     onActivate?.(note.id)
   }
   const rightNote = otherNotes.find((entry) => entry.id === dualNoteId)
+  const referencePage = dualOpen && !rightNote ?
+    document?.pages.find((entry) => entry.id === dualPageId) ?? document?.pages[0] : undefined
+  const referenceUrl = useMemo(() => referencePage
+    ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(pageSvg(referencePage, assetUrls, true))}`
+    : undefined, [referencePage, assetUrls])
+  const referenceSize = pageSize(referencePage ?? {})
+  const referenceImages = pageTransfer?.reference && pageTransfer.to === referencePage?.id ? pageTransfer.objects : []
   const adjustSplit = (event: React.PointerEvent<HTMLDivElement>): void => {
     const bounds = event.currentTarget.parentElement!.getBoundingClientRect()
     setDualRatio(Math.max(0.3, Math.min(0.7, (bounds.right - event.clientX) / bounds.width)))
@@ -1766,11 +1821,11 @@ export default function LiveNoteEditorView({
         </div>
         <div className="editor-top-actions">
           <span className="editor-save-state" aria-live="polite">
-            {recording ? '正在录音…' : saveState}
+            {saveState}
           </span>
           <EditorButton className="editor-pages-toggle" aria-label="导入 PDF" help="将 PDF 加入当前笔记以便批注。" onClick={() => pdfRef.current?.click()} disabled={importing || !document}><FileUp size={17} /><span>PDF</span></EditorButton>
           <EditorButton ref={pdfSearchButton} className={`editor-pages-toggle ${pdfSearchOpen ? 'active' : ''}`} aria-label="查找 PDF 原文" help="搜索 PDF 正文（Ctrl/Cmd+F）。" aria-expanded={pdfSearchOpen} onClick={() => pdfSearchOpen ? closePdfSearch() : setPdfSearchOpen(true)} disabled={!document}><Search size={17} /></EditorButton>
-          {document?.pages.some((item) => item.sourcePdfId) && <EditorButton aria-label="选择 PDF 原文" help="开启后可在可见 PDF 页面拖选文字，按 Ctrl+C 复制。扫描页请先用查找中的 OCR。" aria-pressed={selectPdfText}
+          {document?.pages.some((item) => item.sourcePdfId) && <EditorButton aria-label="选择 PDF 原文" help="开启后可在可见 PDF 页面拖选文字，按 Ctrl+C 复制。扫描页识别后，可在 PDF 查找中复制 OCR 文字。" aria-pressed={selectPdfText}
             className={`editor-pages-toggle${selectPdfText ? ' active' : ''}`} onClick={() => setSelectPdfText(!selectPdfText)}><ScanText size={17} /></EditorButton>}
           <EditorButton aria-label="识别手写" help="尝试识别当前页笔迹，核对后加入搜索。" disabled={!page || inkRecognizing}
             onClick={() => void recognizePageInk()}><ScanEye size={17} /></EditorButton>
@@ -1815,22 +1870,6 @@ export default function LiveNoteEditorView({
       </div>}
       {document && <PdfSearchPanel open={pdfSearchOpen && !noteFullscreen} initialQuery={initialPdfQuery} pages={document.pages} currentPageId={pageId} activeHit={pdfHit}
         onOcrUpdated={() => onPdfTextChanged?.(note.id)} onJump={jumpToPdfHit} onClear={() => setPdfHit(null)} onClose={closePdfSearch} />}
-      {activeRecording && audioUrl && (
-        <div hidden={!transcriptOpen || noteFullscreen}>
-          <AudioTranscription key={activeRecording.id} assetId={activeRecording.assetId} url={audioUrl}
-            result={activeRecording.transcript}
-            onResult={(result) => {
-              const history = historyRef.current
-              if (!history) return
-              const current = history.current
-              const sessions = noteRecordings(current).map((item) => item.id === activeRecording.id ? { ...item, transcript: result } : item)
-              publish(history.replace({ ...current, recordings: sessions,
-                audioTranscript: sessions.at(-1)?.transcript }))
-            }}
-            onSeek={playAt}
-          />
-        </div>
-      )}
       {(saveState.startsWith('保存失败') ||
         saveState.startsWith('PDF 导入失败') ||
         saveState.startsWith('打开失败') ||
@@ -1894,8 +1933,8 @@ export default function LiveNoteEditorView({
               <EditorButton aria-label="自定义荧光笔宽" help="拖动滑块或输入精确笔宽。" aria-haspopup="dialog" aria-expanded={toolPanel?.kind === 'highlight-width'} onClick={(event) => openToolPanel('highlight-width', event.currentTarget)}>{highlightWidth} px</EditorButton>
             </>
             ) : tool === 'eraser' ? (
-              <EditorButton aria-label={`橡皮大小 ${eraserRadius * 2} 像素`} label="橡皮大小" help="选择擦除圆圈的直径。" aria-haspopup="dialog" aria-expanded={toolPanel?.kind === 'eraser'} onClick={(event) => openToolPanel('eraser', event.currentTarget)}>
-                <span className="editor-eraser-size">{eraserRadius * 2}</span>
+              <EditorButton aria-label={`橡皮大小 ${eraserDiameter} 像素`} label="橡皮大小" help="拖动滑块或输入直径，最大可设为页面大小。" aria-haspopup="dialog" aria-expanded={toolPanel?.kind === 'eraser'} onClick={(event) => openToolPanel('eraser', event.currentTarget)}>
+                <span className="editor-eraser-size">{eraserDiameter}</span>
               </EditorButton>
             ) : (
               <>
@@ -1934,7 +1973,7 @@ export default function LiveNoteEditorView({
             <EditorButton aria-label="区域截图" help="截取屏幕的一部分，插入笔记或贴到桌面。" onClick={() => void startCapture()}>
               <Camera size={19} />
             </EditorButton>
-            <EditorButton aria-label={recording ? '停止录音' : '开始录音'} help={recording ? '结束并保存本次录音。' : '录下声音并关联同时写下的笔迹。'} disabled={recorder.busy} onClick={() => recording ? void recorder.stop().catch(() => undefined) : void recorder.start()}>{recording ? <Square size={18} fill="#bd527b" /> : <Mic size={19} />}</EditorButton>
+
             <EditorButton
               aria-label="贴到桌面"
               help="把选中的图片放到置顶小窗。"
@@ -1987,7 +2026,7 @@ export default function LiveNoteEditorView({
               const fit = availableWidth > 0 && (canvasPage.size || dualOpen || embedded)
                 ? Math.min(1, Math.max(0.25, availableWidth / width)) : 1
               const paperZoom = zoom * fit
-              return <div key={canvasPage.id} data-page={canvasPage.id} className={`editor-paper ${canvasPage.paper} ${canvasPage.id === pageId ? 'current' : ''}`} style={{ width: width * paperZoom, height: height * paperZoom, minHeight: height * paperZoom, backgroundColor: canvasPage.paperColor && paperColors[canvasPage.paperColor] }}>
+              return <div key={canvasPage.id} data-page={canvasPage.id} data-image-drop={highlightedDropPage === canvasPage.id ? 'true' : undefined} className={`editor-paper ${canvasPage.paper} ${canvasPage.id === pageId ? 'current' : ''}`} style={{ width: width * paperZoom, height: height * paperZoom, minHeight: height * paperZoom, backgroundColor: canvasPage.paperColor && paperColors[canvasPage.paperColor] }}>
                 <PageRuling page={canvasPage} />
                 {canvasPage.backgroundAssetId && assetUrls[canvasPage.backgroundAssetId] && <img className="editor-page-background" src={assetUrls[canvasPage.backgroundAssetId]} alt="PDF 原页" />}
                 {canvasPage.sourcePdfId && canvasPage.sourcePageNumber &&
@@ -2007,7 +2046,7 @@ export default function LiveNoteEditorView({
                   onLostPointerCapture={pointerCancel}
                   onPointerEnter={updateHover}
                   onPointerLeave={() => setHover(null)}
-                  onDoubleClick={seekAudioAt}
+                  onDoubleClick={editCanvasText}
                 >
                   {pdfHit?.pageId === canvasPage.id && (
                     <g pointerEvents="none" aria-hidden="true">
@@ -2036,8 +2075,8 @@ export default function LiveNoteEditorView({
                       className={tool === 'eraser' ? 'editor-eraser-outline' : undefined}
                       cx={hover.point.x}
                       cy={hover.point.y}
-                      r={tool === 'eraser' ? eraserRadius : 1.6 / paperZoom}
-                      fill={tool === 'eraser' ? 'none' : inkColor}
+                      r={tool === 'eraser' ? eraserDiameterFor(canvasPage) / 2 : 1.6 / paperZoom}
+                      fill={tool === 'eraser' ? '#7059c61a' : inkColor}
                       stroke={tool === 'eraser' ? '#514765' : inkColor}
                       strokeWidth={tool === 'eraser' ? 1.3 : 0}
                       vectorEffect="non-scaling-stroke"
@@ -2154,16 +2193,6 @@ export default function LiveNoteEditorView({
               }}>{countdownEnd ? '暂停' : countdownLeft === null ? '倒计时' : '继续'}</button>
               {countdownLeft !== null && <button aria-label="重置倒计时" onClick={() => { setCountdownEnd(null); setCountdownLeft(null) }}>重置</button>}
             </div>
-            {recordings.length > 1 && <select aria-label="录音片段" value={activeRecordingId} onChange={(event) => { pendingSeek.current = null; setRecordingId(event.target.value) }}>
-              {recordings.map((item, index) => <option key={item.id} value={item.id}>录音 {index + 1}</option>)}
-            </select>}
-            {audioUrl && <>
-              <audio key={activeRecordingId} ref={audioRef} controls src={audioUrl} onLoadedMetadata={() => {
-                const seek = pendingSeek.current
-                if (seek && seek.id === activeRecordingId) { pendingSeek.current = null; playAt(seek.seconds) }
-              }} onTimeUpdate={(event) => setPlaybackMs(event.currentTarget.currentTime * 1000)} aria-label="笔迹关联录音" />
-              <button className="editor-audio-toggle" aria-label="查看录音转写" aria-expanded={transcriptOpen} onClick={() => setTranscriptOpen(!transcriptOpen)}>转写</button>
-            </>}
             <div className="editor-zoom-controls" aria-label="画布缩放" title="Ctrl + 鼠标滚轮缩放">
               <button aria-label="缩小画布" onClick={() => setZoom((value) => Math.max(0.25, Math.round((value - 0.25) * 100) / 100))}>−</button>
               <span>{Math.round(zoom * 100)}%</span>
@@ -2182,13 +2211,21 @@ export default function LiveNoteEditorView({
             onLostPointerCapture={() => { dualResize.current = null }}
             onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setDualRatio((ratio) => Math.max(0.3, Math.min(0.7, ratio + (event.key === 'ArrowLeft' ? 0.05 : -0.05)))) } }}
           />
-          <aside className="editor-dual-panel" aria-label="双开笔记" style={{ flexBasis: `${dualRatio * 100}%` }}>
+          <aside ref={companionPanel} className="editor-dual-panel" aria-label="双开笔记" style={{ flexBasis: `${dualRatio * 100}%` }}>
           {rightNote && (rightNote.workspace || rightNote.kind === 'markdown') ? renderCompanion?.(rightNote.id, closeDual) : rightNote ? <LiveNoteEditorView key={rightNote.id} note={rightNote} folders={folders} otherNotes={[]} onBack={closeDual}
             onTitleChange={(title) => onChangeOtherNote?.(rightNote.id, { title })} onFolderChange={(folder) => onChangeOtherNote?.(rightNote.id, { folder })}
             tagCatalog={tagCatalog} onTagsChange={(tags) => onChangeOtherNote?.(rightNote.id, { tags })} onCreateTag={onCreateTag} preferences={preferences} onBrushPreferences={onBrushPreferences}
             onDocumentSaved={onDocumentSaved} onPdfTextChanged={onPdfTextChanged} onFocusTime={onFocusTime} onActivate={onActivate} focusNoteId={focusNoteId}
-            embedded requestedPageId={dualPageId} /> :
-            (() => { const target = document?.pages.find((entry) => entry.id === dualPageId) ?? document?.pages[0]; return target ? <img className="editor-dual-page" alt="参照页面" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(pageSvg(target, assetUrls, true))}`} /> : <p>正在打开参照笔记…</p> })()}
+            embedded requestedPageId={dualPageId} imageDropRef={companionImageDrop} highlightedDropPage={companionDropPage} /> : referencePage ? (
+            <svg className="editor-dual-page" data-reference-page={referencePage.id} data-image-drop={referenceImages.length ? 'true' : undefined}
+              role="img" aria-label="参照页面" viewBox={`0 0 ${referenceSize.width} ${referenceSize.height}`}>
+              <image href={referenceUrl} width={referenceSize.width} height={referenceSize.height} />
+              {referenceImages.map((element) => element.kind === 'image' && assetUrls[element.assetId] && (
+                <image key={element.id} href={assetUrls[element.assetId]} x={element.x} y={element.y}
+                  width={element.width} height={element.height} />
+              ))}
+            </svg>
+          ) : <p>正在打开参照笔记…</p>}
         </aside></>}
         {pagesOpen && (
           <aside className="editor-page-manager" aria-label="页面缩略图目录">
@@ -2370,13 +2407,17 @@ export default function LiveNoteEditorView({
               <button type="button" onClick={() => { chooseToolOption(); setInkComparisonOpen(true) }}>笔迹对照</button>
             </div>
           ) : toolPanel.kind === 'eraser' ? (
-            <div className="editor-eraser-options">
-              {[12, 24, 40].map((diameter) => (
-                <button key={diameter} type="button" aria-pressed={eraserRadius * 2 === diameter} onClick={() => { setEraserRadius(diameter / 2); chooseToolOption() }}>
-                  <span style={{ width: diameter / 2, height: diameter / 2 }} />
-                  {diameter} px
-                </button>
-              ))}
+            <div className="editor-eraser-settings">
+              <div className="editor-eraser-options">
+                {[12, 24, 40].map((diameter) => (
+                  <button key={diameter} type="button" aria-pressed={eraserSize === diameter} onClick={() => { setEraserSize(diameter); chooseToolOption() }}>
+                    {diameter} px
+                  </button>
+                ))}
+                <button type="button" aria-pressed={eraserSize === 'page'} onClick={() => { setEraserSize('page'); chooseToolOption() }}>页面大小</button>
+              </div>
+              <BrushWidthControl label="直径" value={eraserDiameter} min={4} max={maxEraserDiameter}
+                logarithmic step={1} onChange={(size) => setEraserSize(size === maxEraserDiameter ? 'page' : size)} />
             </div>
           ) : (
             <>

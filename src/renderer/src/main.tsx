@@ -6,16 +6,17 @@ import './assets/views.css'
 import './assets/workspaces.css'
 import './assets/pen-poc.css'
 import './assets/editor-live.css'
+import './assets/theme.css'
 import './assets/motion.css'
 
 import { StrictMode, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
-import { prepareEditorsForClose } from './editor/autosave'
+import { flushEditorSaves } from './editor/autosave'
 import { flushVaultSettings, prepareVaultSettings } from './editor/vaultSettings'
 
 window.liftInk.onPrepareClose(async () => {
-  await prepareEditorsForClose()
+  await flushEditorSaves()
   await flushVaultSettings()
 })
 
