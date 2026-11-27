@@ -1,10 +1,19 @@
 import { net, shell } from 'electron'
 import type { ReleaseUpdate } from '../shared/editor'
+import { desktopRelease } from '../shared/release'
 
 const repository = 'poopoo5194379/LiftInk'
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const versionOrder = new Intl.Collator('en', { numeric: true })
-const installerName = (version: string): string => `LiftInk-${version}-setup.exe`
+type DesktopRelease = NonNullable<ReturnType<typeof desktopRelease>>
+const installerName = (target: DesktopRelease, version: string): string =>
+  target === 'win-x64' ? `LiftInk-${version}-setup.exe` : `LiftInk-${version}-${target}.dmg`
+
+function currentTarget(): DesktopRelease {
+  const target = desktopRelease(process.platform, process.arch)
+  if (!target) throw new Error('当前系统没有适用的安装包')
+  return target
+}
 
 type GitHubRelease = {
   tag_name: string
@@ -13,6 +22,7 @@ type GitHubRelease = {
 }
 
 export async function checkReleaseUpdate(currentVersion: string): Promise<ReleaseUpdate | null> {
+  const target = currentTarget()
   const response = await net.fetch(`https://api.github.com/repos/${repository}/releases?per_page=100`, {
     headers: { Accept: 'application/vnd.github+json' },
     credentials: 'omit',
@@ -25,12 +35,12 @@ export async function checkReleaseUpdate(currentVersion: string): Promise<Releas
     if (release.draft || !release.tag_name.startsWith('v')) continue
     const version = release.tag_name.slice(1)
     if (!versionPattern.test(version) || (latest && versionOrder.compare(version, latest) <= 0)) continue
-    if (release.assets.some((asset) => asset.name === installerName(version) && asset.state === 'uploaded')) latest = version
+    if (release.assets.some((asset) => asset.name === installerName(target, version) && asset.state === 'uploaded')) latest = version
   }
   return latest ? { version: latest, available: versionOrder.compare(latest, currentVersion) > 0 } : null
 }
 
 export async function downloadRelease(version: unknown): Promise<void> {
   if (typeof version !== 'string' || !versionPattern.test(version)) throw new Error('无效的版本号')
-  await shell.openExternal(`https://github.com/${repository}/releases/download/v${version}/${installerName(version)}`)
+  await shell.openExternal(`https://github.com/${repository}/releases/download/v${version}/${installerName(currentTarget(), version)}`)
 }

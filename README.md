@@ -1,10 +1,10 @@
 # LiftInk · 仰墨
 
-**在 Windows 上阅读资料、手写批注，并把笔记留在自己选的文件夹。**
+**在 Windows 和 macOS 上阅读资料、手写批注，并把笔记留在自己选的文件夹。**
 
 适合用鼠标、触控笔或数位板读论文、标讲义、整理项目资料。把 PDF 拖进来，就能查原文、画重点，再把另一页或另一篇笔记打开在旁边。
 
-[**下载 Windows x64 预览版**](https://github.com/poopoo5194379/LiftInk/releases) · [反馈问题](https://github.com/poopoo5194379/LiftInk/issues)
+[**下载桌面预览版**](https://github.com/poopoo5194379/LiftInk/releases) · [反馈问题](https://github.com/poopoo5194379/LiftInk/issues)
 
 ![LiftInk 默认主页](screenshots/liftink-default-home.png)
 
@@ -15,18 +15,18 @@
 | **阅读和批注 PDF** | 导入 PDF 后保留原件，支持原文查找、文字选择和手写批注。扫描件可以用 OCR 搜索内容，也可以复制当前页的识别文字。批注完成后可导出 PDF。 |
 | **手写和画图** | 新建分页笔记或白板，用钢笔、荧光笔、图层和套索整理内容。橡皮支持滑块和精确输入，最大可以设到页面大小。 |
 | **边看资料边整理** | 双开两页或两篇笔记，框选摘录时保留来源。区域截图插入左页后，可用「选择」工具将图片拖到右侧的手写或 PDF 页面。 |
-| **整理和找回笔记** | 用文件夹、标签和收藏分类。按 `Ctrl+K` 搜索笔记与正文。也可以写 Markdown、画思维导图，把笔记关联到日程或目标。 |
+| **整理和找回笔记** | 用文件夹、标签和收藏分类。按 Windows 的 `Ctrl+K` 或 Mac 的 `⌘K` 搜索笔记与正文。也可以写 Markdown、画思维导图，把笔记关联到日程或目标。 |
 | **保管自己的资料** | 在「设置 → 本地存储位置」查看路径或迁移到另一块盘。可以备份整库并从快照恢复，笔记、原始附件和资料库配置一起保留。 |
 | **换一套界面颜色** | 在「设置 → 外观」切换浅色、深色或跟随系统，并选择柔紫、海蓝、松绿或玫红。首页背景和编辑区会一起换色。 |
 
 ## 五分钟上手
 
-1. 在 [Releases](https://github.com/poopoo5194379/LiftInk/releases) 下载 Windows x64 的 `LiftInk-*-setup.exe`。各版本的功能和已知限制见发布说明。
+1. 在 [Releases](https://github.com/poopoo5194379/LiftInk/releases) 下载安装包。Windows x64 选 `LiftInk-*-setup.exe`。macOS 13 或更新版本可下载 DMG，Apple 芯片选 `*-mac-arm64.dmg`，Intel 选 `*-mac-x64.dmg`。打开 DMG 后，将 LiftInk 拖入「应用程序」。
 2. 打开 LiftInk，点「写第一篇笔记」，或把 PDF 拖进首页。
 3. 在笔记右上角点「双开页面」，从右侧选择一页资料，在左边写批注或摘录。
 4. 想把资料存到另一块盘时，进入「设置 → 本地存储位置」，点击「更改存储位置」。LiftInk 会复制并校验资料库，完成后切换到新位置。
 
-从 1.0.1 起，可以在「设置 → 版本更新」检查 GitHub 上的新版本。发现更新后，点「下载 Windows 安装包」。下载完成后退出 LiftInk，再运行安装包。
+「设置 → 版本更新」会在 GitHub 上查找适合当前电脑的版本。下载安装包后，退出 LiftInk 再安装。Mac 预览版使用临时签名，尚未通过 Apple 公证。
 
 ## 数据与备份
 

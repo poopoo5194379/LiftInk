@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, Notification, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, Notification, screen, shell, systemPreferences, Tray } from 'electron'
 import { basename, extname, isAbsolute, join } from 'path'
 import { createHash, randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
@@ -170,6 +170,7 @@ function showTray(window: BrowserWindow): void {
 
 app.on('before-quit', () => { quitting = true })
 const pendingPdfPaths: string[] = []
+let readyToOpen = false
 
 function validPdfOpenPath(path: unknown): string | null {
   return typeof path === 'string' && isAbsolute(path) && extname(path).toLowerCase() === '.pdf'
@@ -181,6 +182,26 @@ function pdfOpenArgument(args: string[]): string | null {
   const flag = args.indexOf('--open-pdf')
   return flag >= 0 ? validPdfOpenPath(args[flag + 1]) : null
 }
+
+function revealPrimaryWindow(): void {
+  if (!readyToOpen || quitting) return
+  if (!primaryWindow) {
+    createWindow()
+    return
+  }
+  if (primaryWindow.isMinimized()) primaryWindow.restore()
+  primaryWindow.show()
+  primaryWindow.focus()
+}
+
+if (process.platform === 'darwin') app.on('open-file', (event, incomingPath) => {
+  event.preventDefault()
+  const path = validPdfOpenPath(incomingPath)
+  if (!path) return
+  pendingPdfPaths.push(path)
+  revealPrimaryWindow()
+  primaryWindow?.webContents.send('liftink:pdf-open-available')
+})
 
 async function readOpenedPdf(path: string): Promise<OpenedPdf> {
   try {
@@ -341,7 +362,8 @@ function createWindow(): void {
             return
           }
           closeAllowed = true
-          mainWindow.close()
+          if (quitting) app.quit()
+          else mainWindow.close()
         },
         async () => {
           if (mainWindow.isDestroyed()) return
@@ -357,7 +379,8 @@ function createWindow(): void {
           })
           if (choice.response === 1) {
             closeAllowed = true
-            mainWindow.close()
+            if (quitting) app.quit()
+            else mainWindow.close()
           } else quitting = false
         }
       )
@@ -477,13 +500,11 @@ if (hasInstanceLock) void app.whenReady().then(async () => {
     platform: process.platform, arch: process.arch, gpu: app.getGPUFeatureStatus().gpu_compositing
   }))
   ipcMain.handle('liftink:check-release-update', (event) => {
-    if (event.sender !== primaryWindow?.webContents || event.senderFrame !== event.sender.mainFrame ||
-        process.platform !== 'win32' || process.arch !== 'x64') throw new Error('当前平台无法检查 Windows x64 更新')
+    if (event.sender !== primaryWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error('请在主窗口检查更新')
     return checkReleaseUpdate(app.getVersion())
   })
   ipcMain.handle('liftink:download-release', (event, version: unknown) => {
-    if (event.sender !== primaryWindow?.webContents || event.senderFrame !== event.sender.mainFrame ||
-        process.platform !== 'win32' || process.arch !== 'x64') throw new Error('当前平台无法下载 Windows x64 更新')
+    if (event.sender !== primaryWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error('请在主窗口下载更新')
     return downloadRelease(version)
   })
   ipcMain.handle('liftink:validate-note-record', (_event, note: unknown) => validNoteRecord(note))
@@ -591,6 +612,9 @@ if (hasInstanceLock) void app.whenReady().then(async () => {
     }
   })
   ipcMain.handle('liftink:capture-screen', async (): Promise<CapturedScreen> => {
+    if (process.platform === 'darwin' && ['denied', 'restricted'].includes(systemPreferences.getMediaAccessStatus('screen'))) {
+      throw new Error('请在 macOS 的「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中允许 LiftInk 录制屏幕，再重试')
+    }
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     const width = Math.round(display.bounds.width * display.scaleFactor)
     const height = Math.round(display.bounds.height * display.scaleFactor)
@@ -630,13 +654,9 @@ if (hasInstanceLock) void app.whenReady().then(async () => {
     pin.setAlwaysOnTop(true)
   })
 
+  readyToOpen = true
   createWindow()
-
-  app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+  app.on('activate', revealPrimaryWindow)
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common

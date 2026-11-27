@@ -1825,7 +1825,7 @@ export default function LiveNoteEditorView({
           </span>
           <EditorButton className="editor-pages-toggle" aria-label="导入 PDF" help="将 PDF 加入当前笔记以便批注。" onClick={() => pdfRef.current?.click()} disabled={importing || !document}><FileUp size={17} /><span>PDF</span></EditorButton>
           <EditorButton ref={pdfSearchButton} className={`editor-pages-toggle ${pdfSearchOpen ? 'active' : ''}`} aria-label="查找 PDF 原文" help="搜索 PDF 正文（Ctrl/Cmd+F）。" aria-expanded={pdfSearchOpen} onClick={() => pdfSearchOpen ? closePdfSearch() : setPdfSearchOpen(true)} disabled={!document}><Search size={17} /></EditorButton>
-          {document?.pages.some((item) => item.sourcePdfId) && <EditorButton aria-label="选择 PDF 原文" help="开启后可在可见 PDF 页面拖选文字，按 Ctrl+C 复制。扫描页识别后，可在 PDF 查找中复制 OCR 文字。" aria-pressed={selectPdfText}
+          {document?.pages.some((item) => item.sourcePdfId) && <EditorButton aria-label="选择 PDF 原文" help="开启后可在可见 PDF 页面拖选文字，再用系统复制快捷键复制。扫描页识别后，可在 PDF 查找中复制 OCR 文字。" aria-pressed={selectPdfText}
             className={`editor-pages-toggle${selectPdfText ? ' active' : ''}`} onClick={() => setSelectPdfText(!selectPdfText)}><ScanText size={17} /></EditorButton>}
           <EditorButton aria-label="识别手写" help="尝试识别当前页笔迹，核对后加入搜索。" disabled={!page || inkRecognizing}
             onClick={() => void recognizePageInk()}><ScanEye size={17} /></EditorButton>
@@ -2193,7 +2193,7 @@ export default function LiveNoteEditorView({
               }}>{countdownEnd ? '暂停' : countdownLeft === null ? '倒计时' : '继续'}</button>
               {countdownLeft !== null && <button aria-label="重置倒计时" onClick={() => { setCountdownEnd(null); setCountdownLeft(null) }}>重置</button>}
             </div>
-            <div className="editor-zoom-controls" aria-label="画布缩放" title="Ctrl + 鼠标滚轮缩放">
+            <div className="editor-zoom-controls" aria-label="画布缩放" title="Ctrl 或 ⌘ + 鼠标滚轮缩放">
               <button aria-label="缩小画布" onClick={() => setZoom((value) => Math.max(0.25, Math.round((value - 0.25) * 100) / 100))}>−</button>
               <span>{Math.round(zoom * 100)}%</span>
               <button aria-label="放大画布" onClick={() => setZoom((value) => Math.min(4, Math.round((value + 0.25) * 100) / 100))}>+</button>

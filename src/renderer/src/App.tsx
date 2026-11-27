@@ -630,7 +630,7 @@ function App(): React.JSX.Element {
         }
       }
     } catch {
-      setToast('无法接收 Windows 打开的 PDF')
+      setToast('无法接收系统打开的 PDF')
     } finally {
       readingShellPdf.current = false
     }

@@ -245,7 +245,7 @@ export default function MarkdownNoteEditor({
         </div>
         <div className="editor-top-actions">
           <span role="status">{status}</span>
-          <EditorButton aria-label="保存" help="保存当前笔记（Ctrl+S）。" disabled={!ready} onClick={saveNow}><Save size={18} /></EditorButton>
+          <EditorButton aria-label="保存" help="保存当前笔记（Ctrl/Cmd+S）。" disabled={!ready} onClick={saveNow}><Save size={18} /></EditorButton>
           <EditorButton aria-label="导出 Markdown" help="导出含图片的 Markdown 文件。" disabled={!ready || busy} onClick={() => void exportMarkdown('md')}><FileText size={18} /></EditorButton>
           <EditorButton aria-label="导出 PDF" help="导出可选中文字的 A4 PDF。" disabled={!ready || busy} onClick={() => void exportMarkdown('pdf')}><FileDown size={18} /></EditorButton>
         </div>

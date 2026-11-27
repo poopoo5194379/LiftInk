@@ -17,15 +17,21 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  target: dmg
+  category: public.app-category.productivity
+  minimumSystemVersion: "13.0"
+  identity: "-"
   entitlementsInherit: build/entitlements.mac.plist
+  fileAssociations:
+    - ext: pdf
+      name: PDF Document
+      role: Viewer
   extendInfo:
-    - NSCameraUsageDescription: Application requests access to the device's camera.
-    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
-    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
-    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+    NSDocumentsFolderUsageDescription: LiftInk 需要访问你选择导入或保存的文稿。
+    NSDownloadsFolderUsageDescription: LiftInk 需要访问你选择导入或保存的下载文件。
   notarize: false
 dmg:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
 linux:
   target:
     - AppImage

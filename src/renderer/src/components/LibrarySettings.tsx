@@ -22,11 +22,13 @@ const sections = [
   ['about', '关于与诊断', '版本、书写问题', Info]
 ] as const
 
+const onMac = navigator.platform.toLowerCase().includes('mac')
+const modifier = onMac ? '⌘' : 'Ctrl'
 const shortcuts = [
-  ['文件', [['新建笔记', 'Ctrl + N'], ['导入文件', 'Ctrl + O'], ['全局搜索', 'Ctrl + K']]],
-  ['编辑', [['保存', 'Ctrl + S'], ['撤销', 'Ctrl + Z'], ['重做', 'Ctrl + Shift + Z'], ['删除选区', 'Delete']]],
+  ['文件', [['新建笔记', `${modifier} + N`], ['导入文件', `${modifier} + O`], ['全局搜索', `${modifier} + K`]]],
+  ['编辑', [['保存', `${modifier} + S`], ['撤销', `${modifier} + Z`], ['重做', `${modifier} + Shift + Z`], ['删除选区', 'Delete']]],
   ['书写工具', [['钢笔', 'P'], ['橡皮擦', 'E'], ['抓手', 'H'], ['套索与选择', 'L / V'], ['临时平移', 'Space']]],
-  ['画布', [['适合页面', 'Ctrl + 0'], ['全屏笔记', 'F11'], ['退出全屏', 'Esc'], ['查找 PDF 原文', 'Ctrl + F']]]
+  ['画布', [['适合页面', `${modifier} + 0`], ['全屏笔记', 'F11'], ['退出全屏', 'Esc'], ['查找 PDF 原文', `${modifier} + F`]]]
 ] as const
 
 function Choice<T extends string>({ label, value, options, onChange }: {
@@ -149,7 +151,7 @@ export default function LibrarySettings({ profile, onProfile, folders, onFolder,
         <h2>通用</h2>
         <div className="preference-row"><span>应用语言</span><span>简体中文</span></div>
         <Choice label="启动时打开" value={p.startup} options={[[ 'workspace', '上次工作区' ], [ 'home', '首页' ]]} onChange={(startup) => onPreferences({ startup })} />
-        <Choice label="关闭窗口时" value={p.close} options={[[ 'exit', '退出应用' ], [ 'tray', '最小化到托盘' ]]} onChange={(close) => onPreferences({ close })} />
+        <Choice label="关闭窗口时" value={p.close} options={[[ 'exit', onMac ? '关闭当前窗口' : '退出应用' ], [ 'tray', onMac ? '隐藏至菜单栏' : '最小化到托盘' ]]} onChange={(close) => onPreferences({ close })} />
         <Toggle label="恢复上次打开的笔记" checked={p.restoreNote} onChange={(restoreNote) => onPreferences({ restoreNote })} />
         <Choice label="新建文件默认位置" value={p.newFolder} options={[[ 'current', '当前文件夹' ], [ 'all', '全部笔记（未分类）' ]]} onChange={(newFolder) => onPreferences({ newFolder })} />
         <section className="glass library-setting" aria-label="思绪拾光屏蔽词">
@@ -194,7 +196,7 @@ export default function LibrarySettings({ profile, onProfile, folders, onFolder,
         <Toggle label="忽略触屏落笔，减少手掌误触" checked={p.ignoreTouch} onChange={(ignoreTouch) => onPreferences({ ignoreTouch })} />
         <h3>检测输入设备与压力</h3><WritingTestPad preferences={p} />
         <div className="library-setting-actions"><button onClick={onTestInput}>打开详细输入测试</button></div>
-        <details><summary>输入兼容性指南</summary><p>请在测试区用笔落笔。若软件显示为鼠标或压力没有变化，请检查厂商驱动的 Windows Ink 选项和笔压配置。设备名称、屏幕映射和驱动层按键由厂商工具管理。</p></details>
+        <details><summary>输入兼容性指南</summary><p>请在测试区用笔落笔。若软件显示为鼠标或压力没有变化，{onMac ? '请检查 macOS 数位板驱动已启用，并在厂商工具中确认笔压配置。' : '请检查厂商驱动的 Windows Ink 选项和笔压配置。'}设备名称、屏幕映射和驱动层按键由厂商工具管理。</p></details>
       </section>}
       {section === 'canvas' && <section className="glass library-setting">
         <h2>画布与笔记</h2>
