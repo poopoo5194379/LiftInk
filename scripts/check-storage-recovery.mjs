@@ -100,6 +100,34 @@ async function run() {
     assert.equal(latest.recovered, false)
     assert.equal(latest.value.pages[0].elements[0].assetId, missingImage)
 
+    const imageBase64 = await page.evaluate(() => {
+      const sample = document.createElement('canvas')
+      sample.width = 2
+      sample.height = 2
+      sample.getContext('2d').fillRect(0, 0, 2, 2)
+      return sample.toDataURL('image/png').split(',')[1]
+    })
+    const storedImage = await page.evaluate(
+      (base64) => window.liftInk.storeImage('image/png', base64),
+      imageBase64
+    )
+    const imagePath = join(dataDir, 'assets', storedImage.assetId)
+    const originalImage = await readFile(imagePath)
+    await page.evaluate((base64) => window.liftInk.storeImage('image/png', base64), imageBase64)
+    assert((await readFile(imagePath)).equals(originalImage))
+    await writeFile(imagePath, 'damaged image')
+    await assert.rejects(
+      page.evaluate((id) => window.liftInk.loadImage(id), storedImage.assetId),
+      /图片资源内容损坏/
+    )
+    await page.evaluate((base64) => window.liftInk.storeImage('image/png', base64), imageBase64)
+    assert((await readFile(imagePath)).equals(originalImage))
+    assert(
+      (await readdir(join(dataDir, 'assets'))).some((name) =>
+        name.startsWith(`${storedImage.assetId}.corrupt-`)
+      )
+    )
+
     const failedId = 'unrecoverable-note'
     const failedPath = join(dataDir, 'notes', `${failedId}.json`)
     await page.evaluate((document) => window.liftInk.saveDocument(document), makeDocument(failedId))
@@ -156,7 +184,7 @@ async function run() {
     const persisted = await page.evaluate((id) => window.liftInk.loadDocument(id), noteId)
     assert.equal(persisted.value.pages[0].elements[0].assetId, missingImage)
     console.log(
-      'Storage recovery passed: versioned index, backup, corruption, write failure, restart, missing image'
+      'Storage recovery passed: index/document backup, image repair, write failure, restart, missing image'
     )
   } finally {
     await app.close()

@@ -24,12 +24,12 @@ for (const [width, height] of [
         scale: 'css',
         clip: { x: 0, y: 0, width, height }
       })
-    await page.getByRole('button', { name: 'Tags', exact: true }).click()
+    await page.getByRole('button', { name: '标签', exact: true }).click()
     await capture('tags')
-    await page.getByRole('button', { name: 'Home', exact: true }).click()
+    await page.getByRole('button', { name: '首页', exact: true }).click()
     await page.getByRole('button', { name: '查看全部日程' }).click()
     await capture('agenda')
-    await page.getByRole('button', { name: 'Home', exact: true }).click()
+    await page.getByRole('button', { name: '首页', exact: true }).click()
     await page.getByRole('button', { name: '新建笔记' }).click()
     await page.getByRole('button', { name: '笔记位置' }).click()
     await capture('folder-picker')

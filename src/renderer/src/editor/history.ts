@@ -1,4 +1,16 @@
-import type { NoteDocument, NotePage, PageElement, PaperKind } from '../../../shared/editor'
+import type { NoteDocument, NotePage, PageElement, PaperKind, PaperSpacing } from '../../../shared/editor'
+import { MAX_NOTE_PAGES } from '../../../shared/editor'
+
+function nextWritingPage(document: NoteDocument): NotePage | undefined {
+  const last = document.pages.at(-1)
+  if (!last?.elements.length || document.pages.length >= MAX_NOTE_PAGES) return
+  return { id: crypto.randomUUID(), paper: last.paper, paperColor: last.paperColor, paperSpacing: last.paperSpacing, size: last.size, elements: [], autoContinuation: true }
+}
+
+export function isUnusedContinuation(page: NotePage): boolean {
+  return page.autoContinuation === true && !page.elements.length && !page.sourcePdfId &&
+    !page.backgroundAssetId && !page.bookmark && !page.layers?.length
+}
 
 type ElementChange = {
   kind: 'element'
@@ -8,12 +20,15 @@ type ElementChange = {
   after: PageElement | null
 }
 type PageChange = { kind: 'page'; index: number; before: NotePage | null; after: NotePage | null }
-type PaperChange = { kind: 'paper'; pageId: string; before: PaperKind; after: PaperKind }
-type Change = ElementChange | PageChange | PaperChange
+type PaperStyle = Pick<NotePage, 'paper' | 'paperSpacing'>
+type PaperChange = { kind: 'paper'; pageId: string; before: PaperStyle; after: PaperStyle }
+type SnapshotChange = { kind: 'snapshot'; before: NoteDocument; after: NoteDocument }
+type Change = ElementChange | PageChange | PaperChange | SnapshotChange
 
 function apply(document: NoteDocument, changes: Change[], forward: boolean): NoteDocument {
   const pages = document.pages.map((page) => ({ ...page, elements: [...page.elements] }))
   for (const change of forward ? changes : [...changes].reverse()) {
+    if (change.kind === 'snapshot') return forward ? change.after : change.before
     if (change.kind === 'page') {
       const value = forward ? change.after : change.before
       const other = forward ? change.before : change.after
@@ -27,7 +42,7 @@ function apply(document: NoteDocument, changes: Change[], forward: boolean): Not
     const page = pages.find((entry) => entry.id === change.pageId)
     if (!page) continue
     if (change.kind === 'paper') {
-      page.paper = forward ? change.after : change.before
+      Object.assign(page, forward ? change.after : change.before)
       continue
     }
     const value = forward ? change.after : change.before
@@ -47,7 +62,8 @@ export class DocumentHistory {
   private redoStack: Change[][] = []
 
   constructor(document: NoteDocument) {
-    this.current = document
+    const next = nextWritingPage(document)
+    this.current = next ? { ...document, pages: [...document.pages, next] } : document
   }
   get canUndo(): boolean {
     return this.undoStack.length > 0
@@ -55,9 +71,15 @@ export class DocumentHistory {
   get canRedo(): boolean {
     return this.redoStack.length > 0
   }
-  private commit(changes: Change[]): NoteDocument {
+  private commit(changes: Change[], continueWriting = false): NoteDocument {
     if (changes.length === 0) return this.current
-    this.current = apply(this.current, changes, true)
+    let next = apply(this.current, changes, true)
+    const blank = continueWriting ? nextWritingPage(next) : undefined
+    if (blank) {
+      changes.push({ kind: 'page', index: next.pages.length, before: null, after: blank })
+      next = { ...next, pages: [...next.pages, blank] }
+    }
+    this.current = { ...next, revision: (this.current.revision ?? 0) + 1 }
     this.undoStack.push(changes)
     if (this.undoStack.length > 200) this.undoStack.shift()
     this.redoStack = []
@@ -84,23 +106,57 @@ export class DocumentHistory {
         }
       ]
     })
-    return this.commit(changes)
+    return this.commit(changes, changes.some((change) => change.after && this.current.pages.at(-1)?.id === change.pageId))
+  }
+  transferObjects(from: NotePage, to: NotePage, objects: PageElement[]): NoteDocument {
+    if (!objects.length || from.id === to.id) return this.current
+    const ids = new Set(objects.map(({ id }) => id))
+    const removes = from.elements.flatMap<ElementChange>((before, index) =>
+      ids.has(before.id) ? [{ kind: 'element', pageId: from.id, index, before, after: null }] : []).reverse()
+    if (removes.length !== objects.length) return this.current
+    const adds = objects.map<ElementChange>((after, index) =>
+      ({ kind: 'element', pageId: to.id, index: to.elements.length + index, before: null, after }))
+    return this.commit([...removes, ...adds], to.id === this.current.pages.at(-1)?.id)
   }
   addPage(page: NotePage): NoteDocument {
     return this.commit([
       { kind: 'page', index: this.current.pages.length, before: null, after: page }
     ])
   }
-  setPaper(pageId: string, paper: PaperKind): NoteDocument {
+  replace(next: NoteDocument): NoteDocument {
+    return this.commit([{ kind: 'snapshot', before: this.current, after: next }])
+  }
+  movePage(pageId: string, direction: -1 | 1): NoteDocument {
+    const index = this.current.pages.findIndex((page) => page.id === pageId)
+    const target = index + direction
+    if (index < 0 || target < 0 || target >= this.current.pages.length) return this.current
+    const pages = [...this.current.pages]
+    ;[pages[index], pages[target]] = [pages[target], pages[index]]
+    return this.replace({ ...this.current, pages })
+  }
+  removePage(pageId: string): NoteDocument {
+    if (this.current.pages.length <= 1) return this.current
+    return this.replace({ ...this.current, pages: this.current.pages.filter((page) => page.id !== pageId) })
+  }
+  updatePage(pageId: string, patch: Partial<NotePage>): NoteDocument {
+    return this.replace({ ...this.current, pages: this.current.pages.map((page) => page.id === pageId ? { ...page, ...patch } : page) })
+  }
+  setPaper(pageId: string, paper: PaperKind, spacing?: PaperSpacing): NoteDocument {
     const current = this.current.pages.find((page) => page.id === pageId)
-    return current && current.paper !== paper
-      ? this.commit([{ kind: 'paper', pageId, before: current.paper, after: paper }])
-      : this.current
+    if (!current) return this.current
+    const paperSpacing = spacing ?? current.paperSpacing
+    if (current.paper === paper && current.paperSpacing === paperSpacing) return this.current
+    return this.commit([{
+      kind: 'paper',
+      pageId,
+      before: { paper: current.paper, paperSpacing: current.paperSpacing },
+      after: { paper, paperSpacing }
+    }])
   }
   undo(): NoteDocument {
     const changes = this.undoStack.pop()
     if (changes) {
-      this.current = apply(this.current, changes, false)
+      this.current = { ...apply(this.current, changes, false), revision: (this.current.revision ?? 0) + 1 }
       this.redoStack.push(changes)
     }
     return this.current
@@ -108,7 +164,7 @@ export class DocumentHistory {
   redo(): NoteDocument {
     const changes = this.redoStack.pop()
     if (changes) {
-      this.current = apply(this.current, changes, true)
+      this.current = { ...apply(this.current, changes, true), revision: (this.current.revision ?? 0) + 1 }
       this.undoStack.push(changes)
     }
     return this.current
@@ -116,5 +172,5 @@ export class DocumentHistory {
 }
 
 export function emptyDocument(noteId: string): NoteDocument {
-  return { version: 1, noteId, pages: [{ id: crypto.randomUUID(), paper: 'lines', elements: [] }] }
+  return { version: 1, noteId, revision: 0, pages: [{ id: crypto.randomUUID(), paper: 'lines', elements: [] }] }
 }

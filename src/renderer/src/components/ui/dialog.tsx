@@ -5,6 +5,7 @@ import * as Primitive from '@radix-ui/react-dialog'
 export const Root = Primitive.Root
 export const Portal = Primitive.Portal
 export const Close = Primitive.Close
+export const Description = Primitive.Description
 
 export function Overlay(props: React.ComponentProps<typeof Primitive.Overlay>): React.JSX.Element {
   return <Primitive.Overlay data-slot="dialog-overlay" {...props} />

@@ -1,0 +1,110 @@
+:root {
+  --motion-enter: 190ms;
+  --motion-state: 150ms;
+  --motion-press: 65ms;
+  --motion-ease: cubic-bezier(0.22, 0.75, 0.25, 1);
+}
+
+.calendar-frame {
+  --calendar-row-height: 31px;
+  flex: none;
+  height: calc(var(--calendar-rows) * var(--calendar-row-height));
+  overflow: clip;
+  overflow-clip-margin: 5px;
+}
+.calendar-frame .calendar-grid {
+  grid-auto-rows: var(--calendar-row-height);
+}
+.agenda-day-items {
+  display: flow-root;
+}
+
+@media (max-height: 820px) {
+  .calendar-frame { --calendar-row-height: 27px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :where(button) {
+    transition:
+      scale var(--motion-state) var(--motion-ease),
+      background-color var(--motion-state) ease,
+      color var(--motion-state) ease,
+      border-color var(--motion-state) ease,
+      box-shadow var(--motion-state) ease;
+  }
+  button:not(:disabled, [aria-disabled='true']):active {
+    scale: 0.96;
+    transition-duration: var(--motion-press);
+  }
+
+  .page-enter {
+    animation: liftink-page-in var(--motion-enter) var(--motion-ease);
+  }
+  .view-editor > .page-enter {
+    animation-name: liftink-fade-in;
+  }
+  .date-enter,
+  .calendar-month-label {
+    animation: liftink-date-in var(--motion-state) var(--motion-ease);
+  }
+  .calendar-frame {
+    transition: height var(--motion-enter) var(--motion-ease);
+  }
+  .calendar-grid[data-month-direction='previous'] { --calendar-slide-from: -12px; }
+  .calendar-grid[data-month-direction='next'] { --calendar-slide-from: 12px; }
+  .calendar-grid[data-month-direction] {
+    animation: liftink-month-in var(--motion-enter) var(--motion-ease);
+  }
+
+  .dialog-overlay[data-state='open'],
+  .editor-export-backdrop {
+    animation: liftink-fade-in var(--motion-state) ease-out;
+  }
+  .dialog-overlay[data-state='closed'] {
+    animation: liftink-fade-out 110ms ease-in;
+  }
+  .dialog-content[data-state='open'],
+  .editor-export-dialog,
+  .editor-capture-dialog {
+    animation: liftink-dialog-in var(--motion-enter) var(--motion-ease);
+  }
+  .dialog-content[data-state='closed'] {
+    animation: liftink-dialog-out 110ms ease-in;
+  }
+  .editor-page-manager,
+  .editor-dual-panel,
+  .editor-pdf-search,
+  .toast,
+  .home-pdf-drop {
+    animation: liftink-fade-in var(--motion-state) ease-out;
+  }
+}
+
+@keyframes liftink-page-in {
+  from { opacity: 0.25; translate: 0 6px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes liftink-date-in {
+  from { opacity: 0.35; translate: 0 3px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes liftink-month-in {
+  from { opacity: 0.3; translate: var(--calendar-slide-from) 0; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes liftink-dialog-in {
+  from { opacity: 0; scale: 0.98; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes liftink-dialog-out {
+  from { opacity: 1; scale: 1; }
+  to { opacity: 0; scale: 0.98; }
+}
+@keyframes liftink-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes liftink-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}

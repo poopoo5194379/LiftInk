@@ -142,9 +142,13 @@
   height: 22px;
 }
 .quick-actions > .quick-button b {
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.25;
   text-align: center;
 }
+.quick-actions > .quick-button-markdown { column-gap: 6px; padding-inline: 10px; }
 .more-menu button {
   display: block;
   width: 100%;
@@ -390,6 +394,7 @@
   margin: 2px 8px 0;
   animation: word-cloud-enter 250ms ease-out both;
 }
+.keyword-cloud-empty { padding: 12px 4px; color: var(--ink-muted); }
 .word-cloud .word {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -510,7 +515,7 @@
   .navigation .brand strong {
     font-size: 22px;
   }
-  .quick-actions > .quick-button:nth-of-type(n + 4) {
+  .quick-actions > .quick-button:nth-of-type(n + 4):not(.quick-button-markdown) {
     display: none;
   }
 }

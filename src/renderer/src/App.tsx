@@ -1,15 +1,35 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import * as Dialog from './components/ui/dialog'
+import LibrarySettings, { type LocalProfile, type SettingsSection } from './components/LibrarySettings'
+import { base64Of, makePortable, readPortable, restoreReferencedAssets, type PortableEntry } from './editor/portable'
 import LiveNoteEditorView from './components/LiveNoteEditorView'
-import type { NoteRecord } from '../../shared/editor'
-import RecentFilesView from './components/RecentFilesView'
+import { referencedAssets } from '../../shared/noteResources'
+import { MAX_NOTE_PAGES, TRASH_RETENTION_MS } from '../../shared/editor'
+import type { NoteDocument, NoteRecord } from '../../shared/editor'
+import { dayKey, focusTotal, formatDuration, noteDate, noteDateDetail } from './editor/noteActivity'
+import { importMarkdown, isMarkdownFile } from './editor/markdownImport'
+import { flushEditorSaves } from './editor/autosave'
+import { emptyDocument } from './editor/history'
+import { isPdfFile, preparePdf } from './editor/pdfImport'
+import { normalizePdfText } from './editor/pdfSearch'
+import { matchesNoteSearch, readNoteContent, recentKeywords, type Keyword } from './editor/pdfLibrary'
+import { imageDimensions, imageMime, storeImageFile } from './editor/imageAsset'
+import RecentFilesView, { type RecentFile } from './components/RecentFilesView'
 import TagsView from './components/TagsView'
 import AgendaView from './components/AgendaView'
+import MarkdownNoteEditor from './components/MarkdownNoteEditor'
+import NotePageThumbnail from './components/NotePageThumbnail'
 import QuickWorkspaceView, {
   type QuickDraft,
   type QuickKind
 } from './components/QuickWorkspaceView'
 import PenInputPocView from './components/PenInputPocView'
+import NoteFileIcon from './components/NoteFileIcon'
+import liftInkMark from './assets/liftink-mark.svg'
+import { accentColors, legacyBrushPreferences, preferenceDefaults, preferenceKey, type Preferences } from './editor/preferences'
+import { isVaultSetting, type VaultOperation } from '../../shared/vault'
+import { flushVaultSettings, getVaultSetting, getVaultSettingEntries, setVaultSetting } from './editor/vaultSettings'
 import {
   Bell,
   CalendarDays,
@@ -23,7 +43,6 @@ import {
   Folder,
   FolderOpen,
   Home,
-  Maximize2,
   Mic,
   MoreHorizontal,
   Network,
@@ -40,54 +59,31 @@ import {
 import './assets/main.css'
 
 type Note = NoteRecord
-const initialNotes: Note[] = [
-  {
-    id: 'design',
-    title: '产品设计思考',
-    originalTitle: '产品设计思考',
-    date: '今天 10:24',
-    tags: ['产品', '设计', '方法论'],
-    kind: 'map',
-    folder: '工作项目 / LiftInk / 交互设计',
-    summary: '用户洞察、设计思维、原型迭代与验证反馈',
-    favorite: true
-  },
-  {
-    id: 'brain',
-    title: '神经科学 · 阅读笔记',
-    originalTitle: '神经科学 · 阅读笔记',
-    date: '昨天 19:08',
-    tags: ['研究', '阅读'],
-    kind: 'brain',
-    folder: '阅读摘录 / 神经科学',
-    summary: '关于记忆、情绪与注意力的阅读摘录',
-    favorite: false
-  },
-  {
-    id: 'plan',
-    title: '项目迭代规划',
-    originalTitle: '项目迭代规划',
-    date: '1 月 19 日',
-    tags: ['产品', '效率', 'PDF'],
-    kind: 'plan',
-    folder: '工作项目 / 产品规划',
-    summary: '产品版本节奏、页面草图与方案评审',
-    favorite: false
-  },
-  {
-    id: 'travel',
-    title: '旅行灵感 · 云南',
-    originalTitle: '旅行灵感 · 云南',
-    date: '1 月 18 日',
-    tags: ['灵感', '旅行'],
-    kind: 'landscape',
-    folder: '灵感收集 / 旅行手记',
-    summary: '山间光线、旅行速写与风景配色',
-    favorite: false
-  }
-]
+const closingFocusKey = 'liftink.focus-at-close'
+
+function readClosingFocus(): Record<string, Record<string, number>> {
+  try { return JSON.parse(localStorage.getItem(closingFocusKey) ?? '{}') }
+  catch { return {} }
+}
+type Goal = { id: string; title: string; done: boolean; noteId?: string }
+function useLocalValue<T>(key: string, initial: T): [T, React.Dispatch<React.SetStateAction<T>>] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const stored = isVaultSetting(key) ? getVaultSetting(key) : localStorage.getItem(key)
+      return stored ? JSON.parse(stored) as T : initial
+    } catch { return initial }
+  })
+  useEffect(() => {
+    const encoded = JSON.stringify(value)
+    if (isVaultSetting(key)) setVaultSetting(key, encoded)
+    else localStorage.setItem(key, encoded)
+  }, [key, value])
+  return [value, setValue]
+}
 type FolderNode = { name: string; children?: FolderNode[] }
-const folderTree: FolderNode[] = [
+type FolderAction = { kind: 'create'; parent: string } | { kind: 'rename'; path: string } | { kind: 'delete'; path: string }
+const parentFolder = (path: string): string => path.split(' / ').slice(0, -1).join(' / ')
+const starterTree: FolderNode[] = [
   { name: '未分类' },
   { name: '课程笔记', children: [{ name: '设计基础' }, { name: '课堂速记' }] },
   {
@@ -106,7 +102,20 @@ const flattenFolders = (nodes: FolderNode[], parent = ''): string[] =>
     const path = parent ? `${parent} / ${node.name}` : node.name
     return [path, ...flattenFolders(node.children ?? [], path)]
   })
-const folders = flattenFolders(folderTree)
+const starterFolders = flattenFolders(starterTree)
+const folderPath = (path: string): string[] => path.split(' / ').map((part) => part.trim()).filter(Boolean)
+function buildFolderTree(paths: string[]): FolderNode[] {
+  const tree: FolderNode[] = []
+  for (const path of paths) {
+    let level = tree
+    for (const name of folderPath(path)) {
+      let node = level.find((entry) => entry.name === name)
+      if (!node) { node = { name, children: [] }; level.push(node) }
+      level = node.children!
+    }
+  }
+  return tree
+}
 type AgendaItem = {
   id: string
   date: string
@@ -114,33 +123,10 @@ type AgendaItem = {
   title: string
   color: string
   done: boolean
+  noteId?: string
+  goalId?: string
+  minutes?: number
 }
-const initialAgenda: AgendaItem[] = [
-  {
-    id: 'meeting',
-    date: '2025-01-21',
-    time: '10:00',
-    title: '项目周会',
-    color: '#5b92ff',
-    done: false
-  },
-  {
-    id: 'review',
-    date: '2025-01-21',
-    time: '14:30',
-    title: '原型方案评审',
-    color: '#ffb53e',
-    done: false
-  },
-  {
-    id: 'reading',
-    date: '2025-01-21',
-    time: '18:00',
-    title: '阅读 ·《设计心理学》',
-    color: '#f8d36d',
-    done: false
-  }
-]
 type SearchResult = {
   id: string
   title: string
@@ -148,308 +134,201 @@ type SearchResult = {
   folder: string
   summary: string
 }
-const mockPdfs: SearchResult[] = [
-  {
-    id: 'pdf-design',
-    title: '设计心理学.pdf',
-    kind: 'pdf',
-    folder: '阅读摘录',
-    summary: '交互设计、认知负荷与可用性'
-  },
-  {
-    id: 'pdf-plan',
-    title: '产品方案评审.pdf',
-    kind: 'pdf',
-    folder: '工作项目',
-    summary: '项目目标、用户需求与页面草图'
-  }
-]
-type Keyword = {
-  text: string
-  x: number
-  y: number
-  size: number
-  tone: 'core' | 'secondary' | 'auxiliary'
-  daysAgo: number
-  latest: string
-  relatedTitles: string[]
-}
-const keywords: Keyword[] = [
-  {
-    text: '产品',
-    x: 48,
-    y: 50,
-    size: 30,
-    tone: 'core',
-    daysAgo: 1,
-    latest: '1 月 20 日',
-    relatedTitles: ['产品设计思考', '项目迭代规划']
-  },
-  {
-    text: '设计灵感',
-    x: 26,
-    y: 22,
-    size: 22,
-    tone: 'core',
-    daysAgo: 2,
-    latest: '1 月 19 日',
-    relatedTitles: ['产品设计思考', '旅行灵感 · 云南']
-  },
-  {
-    text: '研究',
-    x: 78,
-    y: 24,
-    size: 21,
-    tone: 'secondary',
-    daysAgo: 4,
-    latest: '1 月 17 日',
-    relatedTitles: ['神经科学 · 阅读笔记']
-  },
-  {
-    text: '方法论',
-    x: 20,
-    y: 63,
-    size: 19,
-    tone: 'secondary',
-    daysAgo: 5,
-    latest: '1 月 16 日',
-    relatedTitles: ['产品设计思考']
-  },
-  {
-    text: '阅读',
-    x: 73,
-    y: 70,
-    size: 20,
-    tone: 'secondary',
-    daysAgo: 3,
-    latest: '1 月 18 日',
-    relatedTitles: ['神经科学 · 阅读笔记']
-  },
-  {
-    text: '用户洞察',
-    x: 45,
-    y: 81,
-    size: 16,
-    tone: 'auxiliary',
-    daysAgo: 7,
-    latest: '1 月 14 日',
-    relatedTitles: ['产品设计思考']
-  },
-  {
-    text: '效率',
-    x: 84,
-    y: 50,
-    size: 16,
-    tone: 'auxiliary',
-    daysAgo: 8,
-    latest: '1 月 13 日',
-    relatedTitles: ['项目迭代规划']
-  },
-  {
-    text: '复盘',
-    x: 6,
-    y: 35,
-    size: 15,
-    tone: 'auxiliary',
-    daysAgo: 12,
-    latest: '1 月 9 日',
-    relatedTitles: ['项目迭代规划']
-  },
-  {
-    text: '旅行',
-    x: 15,
-    y: 85,
-    size: 15,
-    tone: 'auxiliary',
-    daysAgo: 15,
-    latest: '1 月 6 日',
-    relatedTitles: ['旅行灵感 · 云南']
-  },
-  {
-    text: '原型',
-    x: 64,
-    y: 11,
-    size: 14,
-    tone: 'auxiliary',
-    daysAgo: 24,
-    latest: '12 月 28 日',
-    relatedTitles: ['项目迭代规划']
-  },
-  {
-    text: '灵感',
-    x: 92,
-    y: 10,
-    size: 13,
-    tone: 'auxiliary',
-    daysAgo: 18,
-    latest: '1 月 3 日',
-    relatedTitles: ['旅行灵感 · 云南']
-  },
-  {
-    text: '笔触',
-    x: 61,
-    y: 89,
-    size: 13,
-    tone: 'auxiliary',
-    daysAgo: 22,
-    latest: '12 月 30 日',
-    relatedTitles: ['产品设计思考']
-  },
-  {
-    text: '思考',
-    x: 31,
-    y: 96,
-    size: 14,
-    tone: 'auxiliary',
-    daysAgo: 42,
-    latest: '12 月 10 日',
-    relatedTitles: ['产品设计思考']
-  },
-  {
-    text: '记录',
-    x: 7,
-    y: 9,
-    size: 13,
-    tone: 'auxiliary',
-    daysAgo: 68,
-    latest: '11 月 14 日',
-    relatedTitles: ['神经科学 · 阅读笔记']
-  }
-]
+const keywordSlots = [
+  [50, 50, 29], [26, 23, 22], [76, 23, 21], [20, 62, 19], [77, 70, 19], [47, 82, 16],
+  [85, 46, 15], [10, 40, 15], [15, 85, 14], [54, 12, 14], [89, 9, 13], [67, 94, 13]
+] as const
 
-function Thumb({ kind }: { kind: string }): React.JSX.Element {
-  if (kind === 'blank') return <div className="thumb blank-thumb" aria-hidden="true" />
-  if (kind === 'landscape')
-    return (
-      <div className="thumb landscape">
-        <div className="land-sun" />
-        <div className="land-mountain far" />
-        <div className="land-mountain near" />
-        <div className="land-water" />
-      </div>
-    )
-  if (kind === 'brain')
-    return (
-      <div className="thumb paper brain">
-        <div className="scribble">the idea of a beautiful mind</div>
-        <svg viewBox="0 0 250 125" aria-hidden="true">
-          <path
-            d="M95 83c-30-5-37-25-24-39 3-22 28-30 42-17 19-11 41 3 39 24 22 20 5 38-21 37-4 14-25 17-32 0Z"
-            fill="none"
-            stroke="#46414d"
-            strokeWidth="2"
-          />
-          <path
-            d="M73 49c13 9 25 0 22-17m18-5c-9 14 4 25 19 20m-13 4c-15 2-22 14-16 31m-24-20c12-7 18 4 16 15m34-21c-1 12 10 16 23 14"
-            fill="none"
-            stroke="#6d6974"
-            strokeWidth="1.5"
-          />
-          <path
-            d="M54 42 27 32m42 45-37 10m124-54 40-17m-41 57 45 13m-78 4 5 28"
-            stroke="#9b95a5"
-          />
-          <g fill="#77717e" fontSize="8">
-            <text x="3" y="28">
-              memory
-            </text>
-            <text x="4" y="91">
-              emotion
-            </text>
-            <text x="195" y="19">
-              focus
-            </text>
-            <text x="199" y="90">
-              ideas
-            </text>
-          </g>
-        </svg>
-      </div>
-    )
-  if (kind === 'plan')
-    return (
-      <div className="thumb paper plan">
-        <div className="sketch-row">
-          <span />
-          <span />
-          <span />
-        </div>
-        <div className="sketch-lines">
-          ──── ───── ────
-          <br />
-          ────── ─── ─────
-        </div>
-        <div className="sketch-row bottom">
-          <span />
-          <span />
-        </div>
-      </div>
-    )
-  return (
-    <div className="thumb paper map">
-      <div className="map-title">产品设计思考 ✦</div>
-      <div className="map-node center">设计思维</div>
-      <div className="map-node a">用户洞察</div>
-      <div className="map-node b">探索定义</div>
-      <div className="map-node c">原型迭代</div>
-      <div className="map-node d">验证反馈</div>
-      <svg viewBox="0 0 260 140" preserveAspectRatio="none" aria-hidden="true">
-        <path
-          d="M130 75 56 50M130 75l76-27M130 75 55 112M130 75l78 36"
-          stroke="#9c85e9"
-          strokeWidth="1.5"
-          fill="none"
-        />
-      </svg>
-    </div>
-  )
+function readLibrarySettings(value: unknown): { folders: string[]; tagCatalog: string[]; agendaItems: AgendaItem[]; goals: Goal[]; profile: LocalProfile; blockedKeywords?: string[] } | undefined {
+  if (value === undefined) return
+  if (!value || typeof value !== 'object') throw new Error('资料库设置无效')
+  const settings = value as NonNullable<ReturnType<typeof readLibrarySettings>>
+  const strings = (items: unknown, length: number): items is string[] => Array.isArray(items) && items.length <= 10_000 && items.every((item) => typeof item === 'string' && item.length <= length)
+  if (!strings(settings.folders, 800) || !strings(settings.tagCatalog, 10000) ||
+      (settings.blockedKeywords !== undefined && !strings(settings.blockedKeywords, 10000)) ||
+      !Array.isArray(settings.agendaItems) || !settings.agendaItems.every((item) => item && /^\d{4}-\d{2}-\d{2}$/.test(item.date) && typeof item.title === 'string' && typeof item.done === 'boolean' && typeof item.color === 'string' && typeof item.time === 'string') ||
+      !Array.isArray(settings.goals) || !settings.goals.every((item) => item && typeof item.title === 'string' && typeof item.done === 'boolean') ||
+      typeof settings.profile?.name !== 'string' || typeof settings.profile.reminders !== 'boolean') throw new Error('资料库设置无效')
+  return settings
 }
+
+const calendarMonth = (date: Date): number => date.getFullYear() * 12 + date.getMonth()
 
 function App(): React.JSX.Element {
-  type Screen = 'home' | 'recent' | 'editor' | 'tags' | 'agenda' | 'quick' | 'pen-poc'
+  type Screen = 'home' | 'recent' | 'favorites' | 'folder' | 'editor' | 'tags' | 'agenda' | 'quick' | 'pen-poc' | 'trash' | 'focus' | 'settings'
   const [screen, setScreen] = useState<Screen>('home')
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>()
+  const [storedPreferences, setPreferences] = useLocalValue<Partial<Preferences>>(preferenceKey, legacyBrushPreferences())
+  const preferences = useMemo(() => ({ ...preferenceDefaults, ...storedPreferences }), [storedPreferences])
+  const [lastBackup, setLastBackup] = useLocalValue<number>('liftink:last-backup', 0)
+  const [lastSaved, setLastSaved] = useLocalValue<number>('liftink:last-saved', 0)
+  const backupInProgress = useRef(false)
+  const lastBackupAttempt = useRef(0)
+  const openFileInput = useRef<HTMLInputElement>(null)
   const [editorReturn, setEditorReturn] = useState<Screen>('home')
   const [quickKind, setQuickKind] = useState<QuickKind>('import')
   const [quickReturn, setQuickReturn] = useState<Screen>('home')
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null)
-  const [notes, setNotes] = useState(initialNotes)
+  const [initialPdfQuery, setInitialPdfQuery] = useState('')
+  const [focusNoteId, setFocusNoteId] = useState<string>()
+  const [draftNote, setDraftNote] = useState<Note | null>(null)
+  const draftRef = useRef<Note | null>(null)
+  const [notes, setNotes] = useState<Note[]>([])
+  const [folderCatalog, setFolderCatalog] = useLocalValue<string[]>('liftink:folders', starterFolders)
+  const [profile, setProfile] = useLocalValue<LocalProfile>('liftink:profile', { name: '', reminders: true })
+  const [libraryBusy, setLibraryBusy] = useState(false)
+  const [vaultBusy, setVaultBusy] = useState(false)
+  const libraryInput = useRef<HTMLInputElement>(null)
+  const folderTree = useMemo(() => buildFolderTree(['未分类', ...folderCatalog, ...notes.map((note) => note.folder)]), [folderCatalog, notes])
+  const folders = useMemo(() => flattenFolders(folderTree), [folderTree])
   const [notesReady, setNotesReady] = useState(false)
+  const indexedPdfVersions = useRef(new Map<string, string>())
+  const [pdfContents, setPdfContents] = useState(new Map<string, string[]>())
+  const [noteContents, setNoteContents] = useState(new Map<string, string[]>())
+  const [pdfIndexing, setPdfIndexing] = useState(false)
+  const creatingNote = useRef(false)
+  const [newNoteBusy, setNewNoteBusy] = useState(false)
+  const readingShellPdf = useRef(false)
+  const shellPdfNotified = useRef(false)
+  const [homeDropActive, setHomeDropActive] = useState(false)
+  const [pdfImportStatus, setPdfImportStatus] = useState('')
+  const [trashUndoId, setTrashUndoId] = useState<string | null>(null)
   const [indexSaveError, setIndexSaveError] = useState(false)
   const [indexLoadError, setIndexLoadError] = useState(false)
-  const [importedFiles, setImportedFiles] = useState<(SearchResult & { date: string })[]>([])
-  const [agendaItems, setAgendaItems] = useState(initialAgenda)
+  const [showAllGoals, setShowAllGoals] = useState(false)
+  const [agendaItems, setAgendaItems] = useLocalValue<AgendaItem[]>('liftink:agenda', [])
+  const [tagCatalog, setTagCatalog] = useLocalValue<string[]>('liftink:tags', [])
+  const [blockedKeywords, setBlockedKeywords] = useLocalValue<string[]>('liftink:keyword-stopwords', [])
+  const [keywordToBlock, setKeywordToBlock] = useState<string | null>(null)
   const [query, setQuery] = useState(''),
     [searchOpen, setSearchOpen] = useState(false),
     [searchIndex, setSearchIndex] = useState(0),
-    [folderOpen, setFolderOpen] = useState(true),
-    [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set()),
+    [folderOpen, setFolderOpen] = useState(() => !preferences.rememberSidebar || localStorage.getItem('liftink:sidebar-open') !== 'false'),
+    [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
+      try { return new Set(preferences.rememberSidebar ? JSON.parse(localStorage.getItem('liftink:sidebar-folders') ?? '[]') : []) }
+      catch { return new Set() }
+    }),
     [selectedFolder, setSelectedFolder] = useState<string | null>(null)
-  const [selectedNav, setSelectedNav] = useState('Home'),
-    [monthOffset, setMonthOffset] = useState(0),
-    [selectedDay, setSelectedDay] = useState(21)
+  const [folderMenu, setFolderMenu] = useState<string | null>(null)
+  const [folderAction, setFolderAction] = useState<FolderAction | null>(null)
+  const [folderName, setFolderName] = useState('')
+  const [folderError, setFolderError] = useState('')
+  const addFolderButton = useRef<HTMLButtonElement>(null)
+  const folderActionTrigger = useRef<HTMLButtonElement | null>(null)
+  const [selectedNav, setSelectedNav] = useState('首页'),
+    [monthOffset, setMonthOffset] = useState(() => calendarMonth(new Date())),
+    [selectedDay, setSelectedDay] = useState(() => new Date().getDate())
+  const [monthDirection, setMonthDirection] = useState<'previous' | 'next' | null>(null)
   const [modal, setModal] = useState<string | null>(null),
     [moreOpen, setMoreOpen] = useState(false)
   const [scheduleWidth, setScheduleWidth] = useState(window.innerWidth <= 1400 ? 260 : 300),
-    [toast, setToast] = useState(''),
-    [goals, setGoals] = useState([true, true, false])
+    [toast, setToast] = useState('')
+  const [goals, setGoals] = useLocalValue<Goal[]>('liftink:goals', [])
+  const [goalDraft, setGoalDraft] = useState({ id: '', title: '', noteId: '' })
+  const [activeAgendaId, setActiveAgendaId] = useState<string>()
+  const [pendingAgendaDelete, setPendingAgendaDelete] = useState<AgendaItem | null>(null)
   const [keywordPeriod, setKeywordPeriod] = useState<7 | 30 | 90>(30),
     [activeKeyword, setActiveKeyword] = useState<Keyword | null>(null)
   const [cardMenu, setCardMenu] = useState<string | null>(null),
     [operationNoteId, setOperationNoteId] = useState<string | null>(null),
     [draftTitle, setDraftTitle] = useState(''),
     [moveTarget, setMoveTarget] = useState(folders[0])
-  const [agendaDraft, setAgendaDraft] = useState({ id: '', time: '09:00', title: '' })
+  const [agendaDraft, setAgendaDraft] = useState({ id: '', time: '', title: '', noteId: '', goalId: '', minutes: '' })
   const [chartPeriod, setChartPeriod] = useState<7 | 30 | 90>(30),
     [hoveredPoint, setHoveredPoint] = useState<number | null>(null)
+  useEffect(() => {
+    const report = (): void => setToast('资料库配置保存失败，请检查存储目录')
+    window.addEventListener('liftink-vault-save-error', report)
+    return () => window.removeEventListener('liftink-vault-save-error', report)
+  }, [])
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const update = (): void => {
+      document.documentElement.dataset.theme = preferences.theme === 'system' ? (media.matches ? 'dark' : 'light') : preferences.theme
+      document.documentElement.style.setProperty('--liftink-accent', accentColors[preferences.accent])
+    }
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [preferences.theme, preferences.accent])
+  useEffect(() => { void window.liftInk.applyWindowPreferences(preferences.scale, preferences.close === 'tray').catch(() => undefined) }, [preferences.scale, preferences.close])
+  useEffect(() => {
+    if (!preferences.rememberSidebar) return
+    localStorage.setItem('liftink:sidebar-open', String(folderOpen))
+    localStorage.setItem('liftink:sidebar-folders', JSON.stringify([...expandedFolders]))
+  }, [folderOpen, expandedFolders, preferences.rememberSidebar])
+  const restoreWorkspace = useEffectEvent((entries: Note[]) => {
+    if (preferences.startup !== 'workspace') return
+    const previous = localStorage.getItem('liftink:last-workspace')
+    if (previous === 'recent' || previous === 'favorites' || previous === 'tags' || previous === 'agenda') {
+      setScreen(previous)
+      setSelectedNav(previous === 'tags' ? '标签' : previous === 'favorites' ? '常用文件' : '首页')
+    } else if (previous === 'folder') {
+      const folder = localStorage.getItem('liftink:last-folder')
+      if (folder && (folderCatalog.includes(folder) || entries.some((note) => note.folder === folder))) {
+        setSelectedFolder(folder)
+        setSelectedNav(folder)
+        setScreen('folder')
+      }
+    } else if (previous === 'editor' && preferences.restoreNote) {
+      const id = localStorage.getItem('liftink:last-note')
+      const note = entries.find((entry) => entry.id === id && !entry.trashed && !entry.workspace)
+      if (note) {
+        setActiveNoteId(note.id)
+        setFocusNoteId(note.id)
+        setScreen('editor')
+      }
+    }
+  })
+  useEffect(() => {
+    if (!notesReady || !['home', 'recent', 'favorites', 'folder', 'tags', 'agenda', 'editor'].includes(screen)) return
+    if (screen === 'editor' && (draftRef.current?.id === activeNoteId || !activeNoteId)) return
+    localStorage.setItem('liftink:last-workspace', screen)
+    if (screen === 'editor' && activeNoteId) localStorage.setItem('liftink:last-note', activeNoteId)
+    if (screen === 'folder' && selectedFolder) localStorage.setItem('liftink:last-folder', selectedFolder)
+  }, [screen, selectedFolder, activeNoteId, notesReady, draftNote])
+  useEffect(() => {
+    if (!notesReady || !['home', 'recent', 'favorites', 'folder', 'tags'].includes(screen)) return
+    const controller = new AbortController()
+    const { signal } = controller
+    const candidates = notes.filter((note) => !note.trashed)
+    const versions = new Map(candidates.map((note) => [note.id, `${note.updatedAt ?? 0}:${note.pageCount ?? ''}`]))
+    const pending = candidates.filter((note) => indexedPdfVersions.current.get(note.id) !== versions.get(note.id))
+    setPdfIndexing(pending.length > 0)
+    void (async () => {
+      for (const note of pending) {
+        if (signal.aborted) return
+        try {
+          const content = await readNoteContent(note, signal)
+          if (signal.aborted) return
+          indexedPdfVersions.current.set(note.id, versions.get(note.id)!)
+          setPdfContents((current) => new Map(current).set(note.id, content.pdf))
+          setNoteContents((current) => new Map(current).set(note.id, content.body))
+        } catch { if (signal.aborted) return }
+      }
+      if (!signal.aborted) setPdfIndexing(false)
+    })()
+    return () => controller.abort()
+  }, [notes, notesReady, screen])
   useEffect(() => {
     let cancelled = false
     void window.liftInk
       .loadNoteIndex()
-      .then(({ value, recovered }) => {
+      .then(({ value, recovered, orphanCount }) => {
         if (cancelled) return
-        if (value) setNotes(value)
-        if (recovered) setToast('笔记目录已从备份恢复，请核对最近的修改')
+        const closingFocus = readClosingFocus()
+        if (value) setNotes(value.map((note) => {
+          const pending = closingFocus[note.id]
+          if (!pending) return note
+          const days = { ...note.focusByDay }
+          for (const [day, ms] of Object.entries(pending)) days[day] = Math.max(days[day] ?? 0, ms)
+          return { ...note, focusByDay: days }
+        }))
+        if (orphanCount)
+          setToast(`找回 ${orphanCount} 篇未列入目录的笔记，已放入未分类，请核对内容`)
+        else if (recovered) setToast('笔记目录已从备份恢复，请核对最近的修改')
         setIndexLoadError(false)
+        restoreWorkspace(value ?? [])
         setNotesReady(true)
       })
       .catch(() => {
@@ -465,75 +344,119 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (notesReady)
       void window.liftInk.saveNoteIndex(notes).then(
-        () => setIndexSaveError(false),
+        () => {
+          setIndexSaveError(false)
+          const pending = readClosingFocus()
+          for (const note of notes) {
+            if (pending[note.id] && Object.entries(pending[note.id]).every(([day, ms]) => (note.focusByDay?.[day] ?? 0) >= ms)) delete pending[note.id]
+          }
+          if (Object.keys(pending).length) localStorage.setItem(closingFocusKey, JSON.stringify(pending))
+          else localStorage.removeItem(closingFocusKey)
+        },
         () => {
           setIndexSaveError(true)
           setToast('笔记目录保存失败')
         }
       )
   }, [notes, notesReady])
-  const month = new Date(2025, monthOffset, 1),
+  const month = new Date(Math.floor(monthOffset / 12), monthOffset % 12, 1),
     days = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate(),
     firstWeekday = (month.getDay() + 6) % 7
   const selectedDate = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`
+  const selectCalendarDate = (nextMonth: number, day: number): void => {
+    if (nextMonth !== monthOffset) {
+      setMonthDirection(nextMonth < monthOffset ? 'previous' : 'next')
+      setMonthOffset(nextMonth)
+    }
+    setSelectedDay(day)
+  }
+  useEffect(() => {
+    if (!profile.reminders) return
+    const notify = (): void => {
+      const now = Date.now()
+      const day = dayKey(new Date(now))
+      const storageKey = 'liftink:reminders-shown'
+      let shown: { date: string; ids: string[] } = { date: day, ids: [] }
+      try {
+        const saved = JSON.parse(localStorage.getItem(storageKey) ?? 'null')
+        if (saved?.date === day && Array.isArray(saved.ids)) shown = saved
+      } catch { /* reminders can proceed with an empty list */ }
+      for (const item of agendaItems) {
+        const id = `${item.id}:${item.time}`
+        if (item.done || item.date !== day || !item.time || shown.ids.includes(id)) continue
+        const due = new Date(`${item.date}T${item.time}:00`).getTime()
+        if (!Number.isFinite(due) || due > now || due < now - 60_000) continue
+        shown.ids.push(id)
+        void window.liftInk.notifyAgenda(item.title, due).catch(() => undefined)
+      }
+      localStorage.setItem(storageKey, JSON.stringify(shown))
+    }
+    notify()
+    const interval = window.setInterval(notify, 15_000)
+    return () => window.clearInterval(interval)
+  }, [agendaItems, profile.reminders])
   const dayAgenda = agendaItems
     .filter((item) => item.date === selectedDate)
     .sort((a, b) => a.time.localeCompare(b.time))
-  const filtered = useMemo(
-    () =>
-      notes.filter(
+  const searchText = useMemo(() => new Map(notes.map((note) => [note.id, [...(noteContents.get(note.id) ?? []), ...(pdfContents.get(note.id) ?? [])]])), [notes, noteContents, pdfContents])
+  const filtered = useMemo(() => {
+      const term = normalizePdfText(query)
+      return notes.filter(
         (n) =>
           !n.trashed &&
-          `${n.title} ${n.tags.join(' ')} ${n.folder} ${n.summary} 笔记`
-            .toLowerCase()
-            .includes(query.toLowerCase()) &&
+          (normalizePdfText(`${n.title} ${n.tags.join(' ')} ${n.folder} ${n.summary} 笔记`).includes(term) ||
+            searchText.get(n.id)?.some((text) => normalizePdfText(text).includes(term))) &&
           (!selectedFolder ||
             n.folder === selectedFolder ||
             n.folder.startsWith(`${selectedFolder} / `)) &&
           (selectedNav !== '常用文件' || n.favorite)
-      ),
-    [notes, query, selectedFolder, selectedNav]
-  )
+      )
+  }, [notes, query, selectedFolder, selectedNav, searchText])
   const searchResults = useMemo(() => {
     const items: SearchResult[] = [
       ...notes
         .filter((note) => !note.trashed)
-        .map((note) => ({
+        .map((note): SearchResult => ({
           id: note.id,
           title: note.title,
-          kind: 'note' as const,
+          kind: note.kind === 'pdf' || note.kind === 'image' ? note.kind : 'note' as const,
           folder: note.folder,
           summary: `${note.summary} · ${note.tags.join(' / ')}`
-        })),
-      ...mockPdfs,
-      ...importedFiles
+        }))
     ]
-    const term = query.trim().toLowerCase()
-    return (
-      term
-        ? items.filter((item) =>
-            `${item.title} ${item.folder} ${item.summary}`.toLowerCase().includes(term)
-          )
-        : items
-    ).slice(0, 6)
-  }, [notes, query, importedFiles])
-  const chartValues =
-    chartPeriod === 7
-      ? [5, 7, 4, 8, 6, 9, 10]
-      : chartPeriod === 30
-        ? [3, 5, 4, 8, 5, 9, 7, 10]
-        : [4, 7, 5, 6, 8, 6, 9, 10]
-  const chartDates = chartValues.map((_, index) => {
-    const date = new Date(
-      2025,
-      0,
-      22 - chartPeriod + Math.round((index * (chartPeriod - 1)) / (chartValues.length - 1))
-    )
-    return `${date.getMonth() + 1}/${date.getDate()}`
+    const term = normalizePdfText(query)
+    if (!term) return items.slice(0, 6)
+    return items.flatMap((item) => {
+      if (normalizePdfText(`${item.title} ${item.folder} ${item.summary}`).includes(term)) return [item]
+      const pdf = pdfContents.get(item.id)?.find((text) => text.includes(term))
+      const body = pdf ?? noteContents.get(item.id)?.map(normalizePdfText).find((text) => text.includes(term))
+      if (!body) return []
+      const position = body.indexOf(term)
+      return [{ ...item, kind: pdf ? 'pdf' as const : item.kind, summary: `${pdf ? 'PDF 正文' : '笔记正文'} · ${body.slice(Math.max(0, position - 12), position + term.length + 18)}` }]
+    }).slice(0, 6)
+  }, [notes, query, pdfContents, noteContents])
+  const libraryNotes = notes.filter((note) => !note.trashed)
+  const showGettingStarted = notesReady && notes.length === 0 && !query.trim() && !selectedFolder
+  const savedNotes = libraryNotes.filter((note) => !note.workspace && (note.documentExpected || note.pageCount !== undefined))
+  const today = new Date()
+  const daysAgo = (days: number): Date => new Date(today.getFullYear(), today.getMonth(), today.getDate() - days)
+  const focusSince = dayKey(daysAgo(chartPeriod - 1))
+  const focusRanking = libraryNotes.map((note) => ({ note, ms: focusTotal(note, focusSince) }))
+    .filter(({ ms }) => ms > 0).sort((a, b) => b.ms - a.ms)
+  const focusMs = focusRanking.reduce((total, entry) => total + entry.ms, 0)
+  const bucketCount = 7
+  const chartBuckets = Array.from({ length: bucketCount }, (_, index) => {
+    const from = daysAgo(chartPeriod - 1 - Math.floor(index * chartPeriod / bucketCount))
+    const to = daysAgo(chartPeriod - Math.floor((index + 1) * chartPeriod / bucketCount))
+    return { from: dayKey(from), to: dayKey(to), label: `${from.getMonth() + 1}/${from.getDate()}` }
   })
+  const chartDates = chartBuckets.map(({ label }) => label)
+  const chartValues = chartBuckets.map(({ from, to }) => libraryNotes.reduce((total, note) =>
+    total + Object.entries(note.focusByDay ?? {}).reduce((sum, [day, ms]) => day >= from && day <= to ? sum + ms : sum, 0), 0))
+  const chartMax = Math.max(60_000, ...chartValues)
   const chartPoints = chartValues.map((value, index) => ({
     x: 5 + (index * 510) / (chartValues.length - 1),
-    y: 118 - value * 9
+    y: 118 - value / chartMax * 90
   }))
   const chartLine = `M${chartPoints[0].x} ${chartPoints[0].y} ${chartPoints
     .slice(1)
@@ -544,75 +467,210 @@ function App(): React.JSX.Element {
       return `C${previous.x + (point.x - before.x) / 6} ${previous.y + (point.y - before.y) / 6} ${point.x - (after.x - previous.x) / 6} ${point.y - (after.y - previous.y) / 6} ${point.x} ${point.y}`
     })
     .join(' ')}`
+  const keywords = useMemo(() => {
+    const since = new Date()
+    since.setHours(0, 0, 0, 0)
+    since.setDate(since.getDate() - keywordPeriod + 1)
+    return recentKeywords(notes, searchText, since.getTime(), blockedKeywords)
+  }, [notes, searchText, keywordPeriod, blockedKeywords])
   const keywordNotes = (keyword: Keyword): Note[] =>
-    notes.filter((note) => !note.trashed && keyword.relatedTitles.includes(note.originalTitle))
+    notes.filter((note) => !note.trashed && keyword.noteIds.includes(note.id))
   const activeKeywordNotes = activeKeyword ? keywordNotes(activeKeyword) : []
-  const activeNote = notes.find((note) => note.id === activeNoteId && !note.trashed) ?? null
-  const openNote = (note: Note): void => {
+  const activeNote = draftNote?.id === activeNoteId ? draftNote : notes.find((note) => note.id === activeNoteId && !note.trashed) ?? null
+  const returnScreen = screen === 'recent' || screen === 'favorites' || screen === 'tags' || screen === 'folder' || screen === 'focus' || screen === 'agenda' ? screen : 'home'
+  const openNote = (note: Note, pdfQuery = '', agendaId?: string): void => {
+    setActiveAgendaId(agendaId)
+    setInitialPdfQuery(pdfQuery)
+    if (note.workspace === 'whiteboard') {
+      void (async () => {
+        try {
+          const initial = emptyDocument(note.id)
+          const elements = (note.draft?.boardItems ?? []).map((text, index) => ({
+            kind: 'text' as const, id: crypto.randomUUID(), text, color: '#252638',
+            fontSize: 24, width: 630, x: 60, y: 80 + index * 60
+          }))
+          initial.pages = [note.draft?.boardPage ?? { ...initial.pages[0], paper: 'blank', elements,
+            size: { width: 960, height: Math.max(980, 140 + elements.length * 60) } }]
+          const record: Note = { ...note, workspace: undefined, draft: undefined, documentExpected: true, pageCount: 1 }
+          const existing = await window.liftInk.loadDocument(note.id)
+          if (!existing.value) await window.liftInk.initializeNote(record, initial)
+          setNotes((current) => current.map((entry) => entry.id === note.id ? record : entry))
+          setEditorReturn(returnScreen)
+          setActiveNoteId(note.id)
+          setFocusNoteId(note.id)
+          setScreen('editor')
+        } catch (error) { setToast(`白板迁移失败，旧版内容已保留：${String(error)}`) }
+      })()
+      return
+    }
     if (note.workspace) {
       setQuickKind(note.workspace)
-      setQuickReturn(screen === 'recent' || screen === 'tags' ? screen : 'home')
+      setQuickReturn(returnScreen)
       setActiveNoteId(note.id)
       setScreen('quick')
       return
     }
-    setEditorReturn(screen === 'recent' || screen === 'tags' ? screen : 'home')
+    setEditorReturn(returnScreen)
     setActiveNoteId(note.id)
+    setFocusNoteId(note.id)
     setSearchOpen(false)
     setScreen('editor')
   }
-  const createNote = useCallback((): void => {
+  const createNoteFromFile = useCallback(async (input?: File | File[], fromShell = false, mode: 'blank' | 'markdown' | 'board' = 'blank'): Promise<void> => {
     if (!notesReady) {
       setToast('笔记目录仍在加载，暂时无法新建')
       return
     }
-    const id = crypto.randomUUID()
-    const note: Note = {
-      id,
-      title: '未命名笔记',
-      originalTitle: `new-${id}`,
-      date: '刚刚',
-      tags: [],
-      kind: 'blank',
-      folder: '未分类',
-      summary: '空白笔记',
-      favorite: false
+    if (creatingNote.current || (readingShellPdf.current && !fromShell)) return
+    setActiveAgendaId(undefined)
+    const makeNote = (file?: File): Note => {
+      const now = Date.now()
+      const id = crypto.randomUUID()
+      const kind = file ? isPdfFile(file) ? 'pdf' : isMarkdownFile(file) ? 'markdown' : 'image' : mode === 'blank' && preferences.noteType === 'board' ? 'board' : mode
+      const summary = { pdf: 'PDF 批注笔记', image: '图片笔记', markdown: 'Markdown 笔记', blank: '空白笔记', board: '白板' }[kind]
+      return {
+        id, title: file?.name.replace(/\.[^.]+$/, '').trim() || (kind === 'board' ? '未命名白板' : '未命名笔记'), originalTitle: `new-${id}`,
+        date: '', createdAt: now, updatedAt: now, tags: [], kind,
+        folder: preferences.newFolder === 'current' && screen === 'folder' && selectedFolder ? selectedFolder : '未分类', summary,
+        favorite: false, documentExpected: true
+      }
     }
-    setNotes((current) => [note, ...current])
-    setEditorReturn(screen === 'recent' || screen === 'tags' ? screen : 'home')
-    setActiveNoteId(id)
-    setModal(null)
-    setScreen('editor')
-  }, [screen, notesReady])
-  const saveQuickNote = (
+    if (!input) {
+      const note = makeNote()
+      draftRef.current = note
+      setDraftNote(note)
+      setEditorReturn(returnScreen)
+      setActiveNoteId(note.id)
+      setInitialPdfQuery('')
+      setFocusNoteId(note.id)
+      setModal(null)
+      setSearchOpen(false)
+      setScreen('editor')
+      return
+    }
+    const files = Array.isArray(input) ? input : [input]
+    if (!files.length) return
+    if (files.length > 10) { setToast('单次最多导入 10 个文件'); return }
+    creatingNote.current = true
+    setNewNoteBusy(true)
+    const imported: Note[] = []
+    const failed: string[] = []
+    try {
+      for (const file of files) {
+        const note = makeNote(file)
+        try {
+          let initial: NoteDocument
+          if (isPdfFile(file)) {
+            const { sourceId, pages } = await preparePdf(file, MAX_NOTE_PAGES, setPdfImportStatus)
+            initial = { version: 1, noteId: note.id, revision: 0, pages, sourcePdfId: sourceId, sourcePdfIds: [sourceId] }
+          } else if (isMarkdownFile(file)) {
+            setPdfImportStatus(`正在导入 ${file.name}…`)
+            initial = await importMarkdown(file, note.id)
+          } else {
+            setPdfImportStatus(`正在导入 ${file.name}…`)
+            const image = await storeImageFile(file)
+            const { width, height } = await imageDimensions(image.dataUrl)
+            const scale = Math.min(1, 650 / width, 880 / height)
+            const w = width * scale, h = height * scale
+            initial = { version: 1, noteId: note.id, revision: 0, pages: [{
+              id: crypto.randomUUID(), paper: 'blank', elements: [{
+                kind: 'image', id: crypto.randomUUID(), assetId: image.assetId,
+                width: w, height: h, x: (750 - w) / 2, y: (980 - h) / 2
+              }]
+            }] }
+          }
+          note.pageCount = initial.pages.length
+          await window.liftInk.initializeNote(note, initial)
+          imported.push(note)
+          setNotes((current) => [note, ...current])
+        } catch (error) { failed.push(`${file.name}：${String(error)}`) }
+      }
+      if (imported.length) {
+        setSelectedNav('首页')
+        setSelectedFolder(null)
+        setQuery('')
+        setModal(null)
+        setSearchOpen(false)
+        if (files.length === 1) {
+          setEditorReturn(returnScreen === 'folder' ? 'home' : returnScreen)
+          setActiveNoteId(imported[0].id)
+          setInitialPdfQuery('')
+          setFocusNoteId(imported[0].id)
+          setScreen('editor')
+        } else setScreen('recent')
+      }
+      setToast(failed.length ? `已导入 ${imported.length} 个，${failed.length} 个失败。${failed[0]}` : `已导入 ${imported.length} 个文件，可直接批注`)
+    } finally {
+      creatingNote.current = false
+      setNewNoteBusy(false)
+      setPdfImportStatus('')
+    }
+  }, [returnScreen, notesReady, preferences.newFolder, preferences.noteType, selectedFolder, screen])
+  const createNote = useCallback((): void => { void createNoteFromFile() }, [createNoteFromFile])
+  const openHomeQuick = (kind: QuickKind): void => {
+    setActiveNoteId(null)
+    setQuickReturn('home')
+    setQuickKind(kind)
+    setScreen('quick')
+  }
+  const createMarkdownNote = (): void => { void createNoteFromFile(undefined, false, 'markdown') }
+  const receiveOpenedPdfs = useEffectEvent(async (): Promise<void> => {
+    if (!notesReady || creatingNote.current || readingShellPdf.current) return
+    readingShellPdf.current = true
+    try {
+      for (;;) {
+        shellPdfNotified.current = false
+        const request = await window.liftInk.takeOpenedPdf()
+        if (!request) {
+          if (shellPdfNotified.current) continue
+          break
+        }
+        if ('error' in request) setToast(`PDF 导入失败：${request.error}`)
+        else {
+          const file = new File([new Uint8Array(request.bytes)], request.name, { type: 'application/pdf' })
+          await createNoteFromFile(file, true)
+        }
+      }
+    } catch {
+      setToast('无法接收 Windows 打开的 PDF')
+    } finally {
+      readingShellPdf.current = false
+    }
+  })
+  useEffect(() => {
+    if (!notesReady || newNoteBusy) return
+    const unsubscribe = window.liftInk.onPdfOpenAvailable(() => {
+      shellPdfNotified.current = true
+      void receiveOpenedPdfs()
+    })
+    const initialCheck = window.setTimeout(() => { void receiveOpenedPdfs() }, 0)
+    return () => {
+      window.clearTimeout(initialCheck)
+      unsubscribe()
+    }
+  }, [notesReady, newNoteBusy])
+  const saveQuickNote = async (
     title: string,
     kind: 'voice' | 'map' | 'board',
     summary: string,
-    draft: QuickDraft
-  ): void => {
+    draft: QuickDraft,
+    targetId = activeNoteId,
+    stay = false
+  ): Promise<void> => {
+    if (!notesReady) throw new Error('笔记库尚未就绪')
     const workspace = kind === 'map' ? 'mindmap' : kind === 'board' ? 'whiteboard' : 'voice'
-    if (activeNoteId) updateNote(activeNoteId, { title, summary, draft })
-    else {
-      const id = crypto.randomUUID()
-      const note: Note = {
-        id,
-        title,
-        originalTitle: `new-${id}`,
-        date: '刚刚',
-        tags: [],
-        kind,
-        workspace,
-        draft,
-        folder: '未分类',
-        summary,
-        favorite: false
-      }
-      setNotes((current) => [note, ...current])
+    const existing = notes.find((note) => note.id === targetId && !note.trashed)
+    const id = existing?.id ?? crypto.randomUUID()
+    const now = Date.now()
+    const record: Note = {
+      id, originalTitle: `new-${id}`, date: '', createdAt: now, tags: [], kind,
+      workspace, folder: '未分类', favorite: false, ...existing,
+      title, summary, draft, updatedAt: now
     }
-    setSelectedFolder(null)
-    setActiveNoteId(null)
-    setScreen('recent')
-    setToast('草稿已保存到最近文件')
+    await window.liftInk.saveNoteIndex(existing ? notes.map((note) => note.id === id ? record : note) : [record, ...notes])
+    setNotes((current) => existing ? current.map((note) => note.id === id ? record : note) : [record, ...current])
+    if (!stay) { setSelectedFolder(null); setActiveNoteId(null); setScreen('recent') }
+    setToast('笔记已保存')
   }
   const toggleFolder = (path: string): void => {
     setExpandedFolders((current) => {
@@ -633,7 +691,24 @@ function App(): React.JSX.Element {
     return () => clearTimeout(id)
   }, [toast, indexSaveError, indexLoadError])
   useEffect(() => {
+    if (!trashUndoId) return
+    const id = window.setTimeout(() => setTrashUndoId(null), 8000)
+    return () => window.clearTimeout(id)
+  }, [trashUndoId])
+  useEffect(() => {
+    if (!notesReady) return
+    const sweep = (): void => {
+      void window.liftInk.sweepTrash().then((expired) => {
+        if (expired.length) setNotes((current) => current.filter((note) => !expired.includes(note.id)))
+      }).catch(() => setToast('回收站清理失败，下次打开时会重试'))
+    }
+    const interval = window.setInterval(sweep, 60_000)
+    if (screen === 'trash') sweep()
+    return () => window.clearInterval(interval)
+  }, [notesReady, screen])
+  useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
+      if (vaultBusy) return
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         document.querySelector<HTMLInputElement>('.search-box input')?.focus()
@@ -643,10 +718,14 @@ function App(): React.JSX.Element {
         e.preventDefault()
         createNote()
       }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') {
+        e.preventDefault()
+        openFileInput.current?.click()
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [createNote])
+  }, [createNote, vaultBusy])
   useEffect(() => {
     const closeSearch = (event: PointerEvent): void => {
       if (!(event.target as HTMLElement).closest('.search-wrap')) setSearchOpen(false)
@@ -654,16 +733,63 @@ function App(): React.JSX.Element {
     document.addEventListener('pointerdown', closeSearch)
     return () => document.removeEventListener('pointerdown', closeSearch)
   }, [])
-  const notifyDemo = (label: string): void => setToast(`${label} · 仅 Demo 演示`)
   const openSearchResult = (result: SearchResult): void => {
     setSearchOpen(false)
-    if (result.kind === 'note') {
-      const note = notes.find((entry) => entry.id === result.id)
-      if (note) openNote(note)
-    } else notifyDemo(`${result.title} · 内容预览尚未接入`)
+    const note = notes.find((entry) => entry.id === result.id)
+    if (note) openNote(note, pdfContents.get(note.id)?.some((text) => text.includes(normalizePdfText(query))) ? query : '')
+    else setToast('这篇笔记已不存在')
   }
   const updateNote = (id: string, patch: Partial<Note>): void => {
-    setNotes((current) => current.map((note) => (note.id === id ? { ...note, ...patch } : note)))
+    const changed = 'trashed' in patch ? patch : { ...patch, updatedAt: Date.now() }
+    if (draftRef.current?.id === id) {
+      draftRef.current = { ...draftRef.current, ...changed }
+      setDraftNote(draftRef.current)
+    } else setNotes((current) => current.map((note) => (note.id === id ? { ...note, ...changed } : note)))
+  }
+  const persistDraft = async (snapshot: Note, document: NoteDocument): Promise<void> => {
+    const draft = draftRef.current?.id === snapshot.id ? draftRef.current : snapshot
+    const now = Date.now()
+    const created = { ...draft, title: draft.title.trim() || '未命名笔记', createdAt: now, updatedAt: now, pageCount: document.pages.length }
+    await window.liftInk.initializeNote(created, document)
+    const latest = draftRef.current?.id === draft.id ? draftRef.current : draft
+    // Queue the index write before a window-close save is acknowledged.
+    flushSync(() => {
+      setNotes((current) => [{ ...created, title: latest.title.trim() || '未命名笔记', tags: latest.tags, folder: latest.folder, focusByDay: latest.focusByDay }, ...current])
+      if (draftRef.current?.id === draft.id) {
+        draftRef.current = null
+        setDraftNote(null)
+      }
+    })
+  }
+  const updateDocumentStats = (id: string, timestamp: number, pageCount: number): void => {
+    setLastSaved(timestamp)
+    indexedPdfVersions.current.delete(id)
+    setNotes((current) => {
+      const note = current.find((entry) => entry.id === id)
+      if (!note || (note.pageCount === pageCount && Math.floor((note.updatedAt ?? 0) / 60000) >= Math.floor(timestamp / 60000))) return current
+      return current.map((entry) => entry.id === id ? { ...entry, updatedAt: Math.max(timestamp, entry.updatedAt ?? 0), pageCount } : entry)
+    })
+  }
+  const addFocusTime = (id: string, day: string, ms: number, closing?: boolean): void => {
+    if (closing) {
+      if (draftRef.current?.id === id) return
+      const pending = readClosingFocus()
+      pending[id] = { ...pending[id], [day]: Math.max(ms, pending[id]?.[day] ?? 0) }
+      localStorage.setItem(closingFocusKey, JSON.stringify(pending))
+      return
+    }
+    const add = (note: Note): Note => ({ ...note, focusByDay: { ...note.focusByDay, [day]: (note.focusByDay?.[day] ?? 0) + ms } })
+    if (draftRef.current?.id === id) {
+      draftRef.current = add(draftRef.current)
+      setDraftNote(draftRef.current)
+    } else setNotes((current) => current.map((note) => note.id === id ? add(note) : note))
+  }
+  const restoreNote = (id: string): void => {
+    const note = notes.find((entry) => entry.id === id)
+    if (!note?.trashed || (note.trashedAt !== undefined && Date.now() - note.trashedAt >= TRASH_RETENTION_MS)) return
+    updateNote(id, { trashed: false, trashedAt: undefined })
+    setTrashUndoId((previous) => previous === id ? null : previous)
+    setToast('已还原到原文件夹')
   }
   const openNoteOperation = (note: Note, action: '重命名笔记' | '移动笔记'): void => {
     setOperationNoteId(note.id)
@@ -675,11 +801,46 @@ function App(): React.JSX.Element {
   const openAgendaForm = (item?: AgendaItem): void => {
     setAgendaDraft(
       item
-        ? { id: item.id, time: item.time, title: item.title }
-        : { id: '', time: '09:00', title: '' }
+        ? { id: item.id, time: item.time, title: item.title, noteId: item.noteId ?? '', goalId: item.goalId ?? '', minutes: String(item.minutes ?? '') }
+        : { id: '', time: '', title: '', noteId: '', goalId: '', minutes: '' }
     )
     setModal(item ? '修改日程' : '新增日程')
   }
+  const openGoalForm = (goal?: Goal): void => {
+    setGoalDraft(goal ? { id: goal.id, title: goal.title, noteId: goal.noteId ?? '' } : { id: '', title: '', noteId: '' })
+    setModal(goal ? '编辑目标' : '新增目标')
+  }
+  const confirmAgendaDelete = (id: string): void => {
+    const item = agendaItems.find((entry) => entry.id === id)
+    if (item) { setPendingAgendaDelete(item); setModal('删除日程') }
+  }
+  const openLinkedNote = (noteId: string, agendaId?: string): void => {
+    const note = notes.find((entry) => entry.id === noteId && !entry.trashed)
+    if (note) openNote(note, '', agendaId)
+    else setToast('关联笔记已不存在或在回收站')
+  }
+  const completeAgenda = (id: string, done: boolean): void => {
+    const item = agendaItems.find((entry) => entry.id === id)
+    setAgendaItems((items) => items.map((entry) => entry.id === id ? { ...entry, done } : entry))
+    if (done && item?.goalId) setGoals((current) => current.map((goal) => goal.id === item.goalId ? { ...goal, done: true } : goal))
+  }
+  const goalRows = (editable: boolean, rows = goals): React.JSX.Element => <>
+    {rows.length ? rows.map((goal) => (
+      <div key={goal.id} className="goal-row">
+        <button className="goal" aria-pressed={goal.done} onClick={() => setGoals((current) => current.map((entry) => entry.id === goal.id ? { ...entry, done: !entry.done } : entry))}>
+          <span className={goal.done ? 'checked' : ''}>{goal.done && <Check size={17} />}</span><b title={goal.title}>{goal.title}</b>
+        </button>
+        {editable && <div className="goal-actions">
+          {goal.noteId && <button onClick={() => openLinkedNote(goal.noteId!)}>打开笔记</button>}
+          <button aria-label={`编辑目标 ${goal.title}`} onClick={() => openGoalForm(goal)}>编辑</button>
+          <button aria-label={`删除目标 ${goal.title}`} onClick={() => { setGoalDraft({ id: goal.id, title: goal.title, noteId: goal.noteId ?? '' }); setModal('删除目标') }}>删除</button>
+        </div>}
+      </div>
+    )) : <p className="empty-day">暂无目标</p>}
+  </>
+  const focusPeriodButtons = <div className="stat-periods" aria-label="书写趋势时间范围">
+    {([7, 30, 90] as const).map((period) => <button key={period} className={chartPeriod === period ? 'selected' : ''} aria-pressed={chartPeriod === period} onClick={() => { setChartPeriod(period); setHoveredPoint(null) }}>{period} 天</button>)}
+  </div>
   const startResize = (e: React.PointerEvent): void => {
     e.preventDefault()
     const x = e.clientX,
@@ -693,13 +854,226 @@ function App(): React.JSX.Element {
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', stop)
   }
+  const openFolder = (path: string): void => {
+    setSelectedFolder(path)
+    setSelectedNav('文件目录')
+    setActiveNoteId(null)
+    setCardMenu(null)
+    setSearchOpen(false)
+    setScreen('folder')
+  }
+  const changeFolder = (source: string, parent: string, inputName: string, remove = false): string | undefined => {
+    if (!notesReady || indexLoadError) return '笔记目录尚未成功载入'
+    if (source === '未分类' || parent === '未分类') return '未分类为系统分区'
+    const name = inputName.trim()
+    if (!remove && !name) return '请输入文件夹名称'
+    if (!remove && (/[\\/]/.test(name) || name.length > 80)) return '名称不能包含斜杠，且最多 80 个字符'
+    if ((remove || source) && !folders.includes(source)) return '文件夹已不存在'
+    if (source && (parent === source || parent.startsWith(`${source} / `))) return '无法移动至自身或子分区'
+    if (parent && !folders.includes(parent)) return '上级分区已不存在'
+    const target = remove ? parentFolder(source) || '未分类' : [parent, name].filter(Boolean).join(' / ')
+    if (!remove && target !== source && folders.includes(target)) return '此处已有同名文件夹'
+    if (target === source) return
+    const within = (path: string): boolean => !!source && (path === source || path.startsWith(`${source} / `))
+    const move = (path: string): string => within(path) ? remove ? target : target + path.slice(source.length) : path
+    setFolderCatalog([...new Set([...folders.filter((path) => !remove || !within(path)).map(move), target])])
+    setNotes((current) => current.map((note) => within(note.folder) ? { ...note, folder: move(note.folder) } : note))
+    if (draftRef.current && within(draftRef.current.folder)) {
+      draftRef.current = { ...draftRef.current, folder: move(draftRef.current.folder) }
+      setDraftNote(draftRef.current)
+    }
+    if (selectedFolder && within(selectedFolder)) setSelectedFolder(move(selectedFolder))
+    setExpandedFolders((current) => new Set([...current].filter((path) => !remove || !within(path)).map(move)))
+    return undefined
+  }
+  const beginFolderAction = (action: FolderAction): void => {
+    setFolderName(action.kind === 'rename' ? folderPath(action.path).at(-1) ?? '' : '')
+    setFolderError('')
+    setFolderMenu(null)
+    setFolderAction(action)
+  }
+  const submitFolderAction = (action: FolderAction): void => {
+    const source = action.kind === 'create' ? '' : action.path
+    const parent = action.kind === 'create' ? action.parent : parentFolder(source)
+    const remove = action.kind === 'delete'
+    const name = folderName.trim()
+    const error = changeFolder(source, parent, name, remove)
+    if (error) { setFolderError(error); return }
+    if (action.kind === 'create') {
+      const segments = folderPath(parent)
+      setExpandedFolders((current) => new Set([...current, ...segments.map((_, i) => segments.slice(0, i + 1).join(' / '))]))
+      setFolderOpen(true)
+      openFolder([parent, name].filter(Boolean).join(' / '))
+    }
+    setFolderAction(null)
+    setToast(remove ? '已删除文件夹，笔记已保留' : action.kind === 'rename' ? '文件夹已重命名' : '文件夹已创建')
+  }
+
+  const backupLibrary = async (single?: Note, toDirectory = false): Promise<void> => {
+    if (!notesReady || libraryBusy || backupInProgress.current) return
+    backupInProgress.current = true
+    setLibraryBusy(true)
+    try {
+      await flushEditorSaves()
+      const entries: PortableEntry[] = []
+      for (const note of single ? [single] : notes) {
+        const document = note.workspace ? null : (await window.liftInk.loadDocument(note.id)).value
+        if (note.documentExpected && !document) throw new Error(`缺少笔记文档：${note.title}`)
+        entries.push({ note, document })
+      }
+      const settings = single ? undefined : { folders, tagCatalog, agendaItems, goals, profile, blockedKeywords }
+      const data = await makePortable(entries, settings)
+      const path = toDirectory ? await window.liftInk.writeLibraryBackup(base64Of(data)) : await window.liftInk.saveExport('liftink', single?.title || 'LiftInk 资料库备份', base64Of(data))
+      if (path) {
+        if (!single) setLastBackup(Date.now())
+        setToast('备份已导出')
+      }
+    } catch (error) { setToast(`备份失败：${String(error)}`) }
+    finally { backupInProgress.current = false; setLibraryBusy(false) }
+  }
+  const runVaultAction = async (operation: VaultOperation, automatic = false): Promise<void> => {
+    if (libraryBusy || backupInProgress.current || (operation === 'migrate' || operation === 'snapshot') && !notesReady) return
+    backupInProgress.current = true
+    setLibraryBusy(true)
+    if (!automatic) setVaultBusy(true)
+    let switching = false
+    try {
+      await flushEditorSaves()
+      await flushVaultSettings()
+      const path = await window.liftInk.vaultOperation(operation, automatic)
+      if (!path) return
+      if (operation === 'snapshot') {
+        setLastBackup(Date.now())
+        setToast('资料库快照已保存并校验')
+      } else switching = true
+    } catch (error) { setToast(`资料库操作失败：${String(error)}`) }
+    finally {
+      if (!switching) {
+        backupInProgress.current = false
+        setLibraryBusy(false)
+        setVaultBusy(false)
+      }
+    }
+  }
+  const runScheduledBackup = useEffectEvent(async () => {
+    const now = Date.now()
+    if (!preferences.backupInterval || libraryBusy || backupInProgress.current ||
+        (screen !== 'home' && screen !== 'settings') ||
+        now - Math.max(lastBackup, lastBackupAttempt.current) < preferences.backupInterval * 86_400_000) return
+    if ((await window.liftInk.storageInfo()).backupDirectory) {
+      lastBackupAttempt.current = now
+      await runVaultAction('snapshot', true)
+    }
+  })
+  useEffect(() => {
+    if (!notesReady || !preferences.backupInterval) return
+    const tick = (): void => { void runScheduledBackup().catch(() => setToast('无法检查自动备份目录')) }
+    tick()
+    const timer = window.setInterval(tick, 60_000)
+    return () => window.clearInterval(timer)
+  }, [notesReady, preferences.backupInterval])
+
+  const restoreLibrary = async (file: File): Promise<void> => {
+    if (!notesReady || libraryBusy) return
+    setLibraryBusy(true)
+    try {
+      const { entries, settings, zip } = await readPortable(file)
+      const configuration = readLibrarySettings(settings)
+      await restoreReferencedAssets(zip, entries)
+      const ids = new Map(entries.map((entry) => [entry.note?.id ?? entry.document!.noteId, crypto.randomUUID()]))
+      const restored: Note[] = []
+      for (const { note, document } of entries) {
+        const id = ids.get(note?.id ?? document!.noteId)!
+        const record: Note = {
+          title: file.name.replace(/\.liftink$/i, ''), originalTitle: `new-${id}`, date: '', kind: document?.richText ? 'markdown' : 'blank',
+          tags: [], folder: '未分类', favorite: false, summary: '从备份恢复', createdAt: Date.now(),
+          ...note, id, documentExpected: !!document
+        }
+        if (document) {
+          await window.liftInk.initializeNote(record, { ...document, noteId: id, excerpts: document.excerpts?.map((excerpt) => ({
+            ...excerpt, sourceNoteId: ids.get(excerpt.sourceNoteId) ?? excerpt.sourceNoteId
+          })) })
+        }
+        restored.push(record)
+      }
+      await window.liftInk.saveNoteIndex([...restored, ...notes])
+      setNotes((current) => [...restored, ...current])
+      if (configuration) {
+        if (configuration.blockedKeywords) setBlockedKeywords((current) => [...new Set([...current, ...configuration.blockedKeywords!])])
+        setFolderCatalog((current) => [...new Set([...current, ...configuration.folders])])
+        setTagCatalog((current) => [...new Set([...current, ...configuration.tagCatalog])])
+        const goalIds = new Map(configuration.goals.map((goal) => [goal.id, crypto.randomUUID()]))
+        setAgendaItems((current) => [...current, ...configuration.agendaItems.map((item) => ({
+          ...item, id: crypto.randomUUID(), noteId: ids.get(item.noteId ?? ''), goalId: goalIds.get(item.goalId ?? '')
+        }))])
+        setGoals((current) => [...current, ...configuration.goals.map((goal) => ({
+          ...goal, id: goalIds.get(goal.id)!, noteId: ids.get(goal.noteId ?? '')
+        }))])
+        if (!profile.name) setProfile(configuration.profile)
+      }
+      setToast(`已恢复 ${restored.length} 篇笔记`)
+    } catch (error) { setToast(`导入失败：${String(error)}`) }
+    finally { setLibraryBusy(false) }
+  }
+
+  const cleanLibrary = async (): Promise<void> => {
+    if (!notesReady || libraryBusy) return
+    setLibraryBusy(true)
+    try {
+      await flushEditorSaves()
+      const ids = new Set<string>()
+      for (const [key, value] of getVaultSettingEntries()) {
+        if (!key.startsWith('liftink:quick-draft:')) continue
+        const saved = JSON.parse(value) as { draft?: QuickDraft } | null
+        if (!saved?.draft) continue
+        for (const id of referencedAssets(null, { draft: saved.draft } as NoteRecord)) ids.add(id)
+      }
+      const { count } = await window.liftInk.cleanAssets([...ids])
+      setToast(count ? `已清理 ${count} 个无引用附件` : '没有超过保留期的无引用附件')
+    } catch (error) { setToast(`清理失败：${String(error)}`) }
+    finally { setLibraryBusy(false) }
+  }
+
+  const renderNoteMenu = (note: Note): React.JSX.Element => (
+    <div className="note-menu glass">
+      <button onClick={() => openNoteOperation(note, '重命名笔记')}>重命名</button>
+      <button onClick={() => { updateNote(note.id, { favorite: !note.favorite }); setCardMenu(null) }}>
+        {note.favorite ? '取消收藏' : '收藏'}
+      </button>
+      <button onClick={() => openNoteOperation(note, '移动笔记')}>移动到</button>
+      <button disabled={libraryBusy} onClick={() => { setCardMenu(null); void backupLibrary(note) }}>导出 LiftInk 备份</button>
+      <button onClick={() => {
+        updateNote(note.id, { trashed: true, trashedAt: Date.now() })
+        setCardMenu(null)
+        setToast('')
+        setTrashUndoId(note.id)
+      }}>
+        <Trash2 size={14} /> 移入回收站
+      </button>
+    </div>
+  )
   const renderFolder = (node: FolderNode, parent = '', depth = 0): React.JSX.Element => {
     const path = parent ? `${parent} / ${node.name}` : node.name
     const expanded = expandedFolders.has(path)
     const hasChildren = !!node.children?.length
+    const menuOpen = folderMenu === path
     return (
-      <div className="folder-branch" key={path}>
-        <div className="folder-row" style={{ paddingLeft: depth * 13 }}>
+      <div className="folder-branch" key={path}
+        onBlur={(event) => {
+          if (menuOpen && !event.currentTarget.contains(event.relatedTarget)) setFolderMenu(null)
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape' || !menuOpen) return
+          event.stopPropagation()
+          event.currentTarget.querySelector<HTMLButtonElement>('.folder-row-action')?.focus()
+          setFolderMenu(null)
+        }}>
+        <div className="folder-row" style={{ paddingLeft: Math.min(depth, 7) * 13 }}
+          onContextMenu={path === '未分类' || !notesReady || indexLoadError ? undefined : (event) => {
+            event.preventDefault()
+            event.currentTarget.querySelector<HTMLButtonElement>('.folder-row-action')?.focus()
+            setFolderMenu(path)
+          }}>
           {hasChildren ? (
             <button
               className={`folder-toggle ${expanded ? 'expanded' : ''}`}
@@ -714,24 +1088,35 @@ function App(): React.JSX.Element {
           )}
           <button
             className={`folder-item ${selectedFolder === path ? 'selected' : ''}`}
-            onClick={() => {
-              setSelectedFolder(path)
-              setSelectedNav('文件目录')
-            }}
+            aria-current={screen === 'folder' && selectedFolder === path ? 'page' : undefined}
+            title={node.name}
+            onClick={() => { setFolderMenu(null); openFolder(path) }}
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
               event.preventDefault()
               const id = event.dataTransfer.getData('application/x-liftink-note')
               if (notes.some((note) => note.id === id)) {
                 updateNote(id, { folder: path })
-                setToast(`已移至「${path}」· 本次演示有效`)
+                setToast(`已移至「${path}」`)
               }
             }}
           >
             {expanded || selectedFolder === path ? <FolderOpen size={19} /> : <Folder size={19} />}
             <span>{node.name}</span>
           </button>
+          {path !== '未分类' && <button type="button" className="folder-row-action"
+            aria-label={`管理文件夹 ${path}`} title="管理文件夹" aria-expanded={menuOpen}
+            disabled={!notesReady || indexLoadError}
+            onClick={() => setFolderMenu(menuOpen ? null : path)}><MoreHorizontal size={17} /></button>}
         </div>
+        {menuOpen && <div className="folder-action-menu" role="group" aria-label={`${node.name}的操作`}
+          onClickCapture={(event) => {
+            folderActionTrigger.current = event.currentTarget.closest('.folder-branch')?.querySelector<HTMLButtonElement>('.folder-row-action') ?? null
+          }}>
+          <button type="button" onClick={() => beginFolderAction({ kind: 'create', parent: path })}><Plus size={16} />新建子文件夹</button>
+          <button type="button" onClick={() => beginFolderAction({ kind: 'rename', path })}><PenLine size={16} />重命名</button>
+          <button type="button" className="folder-delete" onClick={() => beginFolderAction({ kind: 'delete', path })}><Trash2 size={16} />删除文件夹</button>
+        </div>}
         {hasChildren && expanded && (
           <div className="folder-children">
             {node.children!.map((child) => renderFolder(child, path, depth + 1))}
@@ -742,8 +1127,33 @@ function App(): React.JSX.Element {
   }
   return (
     <div
-      className={`app-shell view-${screen}`}
+      className={`app-shell view-${screen}${['trash', 'folder', 'favorites', 'focus'].includes(screen) ? ' view-recent' : ''}`}
       style={{ '--schedule-width': `${scheduleWidth}px` } as React.CSSProperties}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes('Files')) return
+        event.preventDefault()
+        if (screen === 'home') {
+          const available = notesReady && !creatingNote.current && !readingShellPdf.current && !modal
+          event.dataTransfer.dropEffect = available ? 'copy' : 'none'
+          setHomeDropActive(available)
+        }
+      }}
+      onDragLeave={(event) => {
+        if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+        setHomeDropActive(false)
+      }}
+      onDrop={(event) => {
+        if (!event.dataTransfer.files.length) return
+        event.preventDefault()
+        setHomeDropActive(false)
+        if (screen !== 'home' || modal) return
+        const files = [...event.dataTransfer.files]
+        if (files.some((file) => !isPdfFile(file) && !isMarkdownFile(file) && !imageMime(file))) {
+          setToast('请拖入 PDF、Markdown、PNG、JPG 或 WebP 文件')
+          return
+        }
+        void createNoteFromFile(files)
+      }}
     >
       <div className="mountain-backdrop" aria-hidden="true" />
       <aside className="navigation">
@@ -752,15 +1162,15 @@ function App(): React.JSX.Element {
           <i />
           <i />
         </div>
-        <div className="brand" aria-label="LiftInk 仰墨">
-          <PenLine size={33} />
+        <div className="brand" aria-label="LiftInk">
+          <img src={liftInkMark} width="35" height="35" alt="" />
           <strong>LiftInk</strong>
         </div>
         <nav className="nav-links" aria-label="主导航">
           {[
-            [Home, 'Home'],
+            [Home, '首页'],
             [Star, '常用文件'],
-            [Tag, 'Tags']
+            [Tag, '标签']
           ].map(([Icon, label]) => (
             <button
               key={label as string}
@@ -768,7 +1178,7 @@ function App(): React.JSX.Element {
               onClick={() => {
                 setSelectedNav(label as string)
                 setSelectedFolder(null)
-                setScreen(label === 'Tags' ? 'tags' : 'home')
+                setScreen(label === '标签' ? 'tags' : label === '常用文件' ? 'favorites' : 'home')
                 setActiveNoteId(null)
               }}
             >
@@ -776,39 +1186,78 @@ function App(): React.JSX.Element {
               {label as string}
             </button>
           ))}
-          <button className="nav-item folder-heading" onClick={() => setFolderOpen(!folderOpen)}>
-            <ChevronDown size={16} className={folderOpen ? '' : 'closed'} />
-            <Folder size={22} />
-            文件目录
-          </button>
+          <div className="folder-heading-row">
+            <button className="nav-item folder-heading" aria-expanded={folderOpen} onClick={() => {
+              setFolderMenu(null)
+              setFolderOpen(!folderOpen)
+            }}>
+              <ChevronDown size={16} className={folderOpen ? '' : 'closed'} />
+              <Folder size={22} />
+              文件目录
+            </button>
+            <button ref={addFolderButton} type="button" className="folder-row-action" aria-label="新建文件夹"
+              title="新建文件夹" disabled={!notesReady || indexLoadError}
+              onClick={(event) => {
+                folderActionTrigger.current = event.currentTarget
+                beginFolderAction({ kind: 'create', parent: '' })
+              }}><Plus size={19} /></button>
+          </div>
           {folderOpen && (
             <div className="folder-list">{folderTree.map((node) => renderFolder(node))}</div>
           )}
         </nav>
-        <button
+        <div className="nav-footer">
+          <button
+            className={`nav-item ${screen === 'trash' ? 'active' : ''}`}
+            aria-current={screen === 'trash' ? 'page' : undefined}
+            onClick={() => {
+              setSelectedNav('回收站')
+              setSelectedFolder(null)
+              setActiveNoteId(null)
+              setScreen('trash')
+            }}
+          >
+            <Trash2 size={22} />
+            回收站
+          </button>
+          <button
           className="nav-item settings"
           onClick={() => {
-            setSelectedNav('Settings')
-            notifyDemo('Settings')
+            setSettingsSection(undefined)
+            setSelectedNav('设置')
+            setSelectedFolder(null)
+            setActiveNoteId(null)
+            setScreen('settings')
           }}
         >
           <Settings size={22} />
-          Settings
-        </button>
+          设置
+          </button>
+        </div>
       </aside>
       <header className="brand-header">
         <em>Lift your head. Ink your mind.</em>
         <span className="slogan-cn">抬头落墨，平视成章。</span>
         <div className="header-spacer" />
-        <button aria-label="通知" className="icon-button" onClick={() => notifyDemo('通知')}>
+        <button aria-label="通知" className="icon-button" onClick={() => setModal('日程通知')}>
           <Bell size={23} />
-          <i className="notification-dot" />
+          {profile.reminders && agendaItems.some((item) => !item.done && item.date === dayKey(new Date())) && <i className="notification-dot" />}
         </button>
-        <button aria-label="账户" className="avatar" onClick={() => notifyDemo('账户')}>
+        <button aria-label="账户" className="avatar" title={profile.name || '本机资料'} onClick={() => { setSettingsSection('general'); setSelectedNav('设置'); setScreen('settings') }}>
           <UserRound size={22} />
         </button>
       </header>
-      <main className="workspace">
+      <input ref={openFileInput} type="file" accept=".pdf,.md,.markdown,image/png,image/jpeg,image/webp" multiple hidden onChange={(event) => {
+        const selected = [...(event.target.files ?? [])]
+        event.target.value = ''
+        if (selected.length) void createNoteFromFile(selected)
+      }} />
+      <input ref={libraryInput} type="file" accept=".liftink" hidden onChange={(event) => {
+        const file = event.currentTarget.files?.[0]
+        event.currentTarget.value = ''
+        if (file) void restoreLibrary(file)
+      }} />
+      <main key={screen === 'folder' ? `folder:${selectedFolder}` : screen} className="workspace page-enter">
         {screen === 'home' ? (
           <div className="content-area">
             <div className="search-wrap">
@@ -876,7 +1325,7 @@ function App(): React.JSX.Element {
                         onMouseEnter={() => setSearchIndex(index)}
                         onClick={() => openSearchResult(result)}
                       >
-                        {result.kind === 'pdf' ? <FileText size={18} /> : <PenLine size={18} />}
+                        <NoteFileIcon kind={result.kind} size={20} />
                         <span>
                           <strong>{result.title}</strong>
                           <small>
@@ -887,7 +1336,7 @@ function App(): React.JSX.Element {
                       </button>
                     ))
                   ) : (
-                    <div className="search-empty">没有找到匹配的笔记或 PDF</div>
+                    <div className="search-empty">{pdfIndexing ? '正在索引 PDF 正文…' : '没有找到匹配的笔记或 PDF'}</div>
                   )}
                   <div className="search-hint">↑ ↓ 选择 · Enter 打开 · Esc 关闭</div>
                 </div>
@@ -906,24 +1355,20 @@ function App(): React.JSX.Element {
                 [Mic, '语音速记'],
                 [FileImage, '导入 PDF/图片'],
                 [Network, '新建思维导图'],
-                [Maximize2, '新建白板']
+                [FileText, '新建 Markdown']
               ].map(([Icon, label]) => (
                 <button
-                  className="quick-button glass"
+                  className={`quick-button glass${label === '新建 Markdown' ? ' quick-button-markdown' : ''}`}
                   key={label as string}
                   onClick={() => {
-                    setActiveNoteId(null)
-                    setQuickReturn('home')
-                    setQuickKind(
+                    if (label === '新建 Markdown') { createMarkdownNote(); return }
+                    openHomeQuick(
                       label === '语音速记'
                         ? 'voice'
                         : label === '导入 PDF/图片'
                           ? 'import'
-                          : label === '新建思维导图'
-                            ? 'mindmap'
-                            : 'whiteboard'
+                          : 'mindmap'
                     )
-                    setScreen('quick')
                   }}
                 >
                   <Icon size={27} />
@@ -943,12 +1388,13 @@ function App(): React.JSX.Element {
                     {['新建思维导图', '新建白板'].map((label) => (
                       <button
                         key={label}
+                        className={label === '新建思维导图' ? 'compact-action' : undefined}
                         onClick={() => {
+                          setMoreOpen(false)
                           setActiveNoteId(null)
                           setQuickReturn('home')
-                          setQuickKind(label === '新建思维导图' ? 'mindmap' : 'whiteboard')
-                          setScreen('quick')
-                          setMoreOpen(false)
+                          if (label === '新建白板') void createNoteFromFile(undefined, false, 'board')
+                          else { setQuickKind('mindmap'); setScreen('quick') }
                         }}
                       >
                         {label}
@@ -963,16 +1409,18 @@ function App(): React.JSX.Element {
                 <h2>
                   最近笔记 <ChevronRight size={20} />
                 </h2>
+                <div className="recent-heading-actions">
                 <button
                   onClick={() => {
                     setSelectedFolder(null)
                     setQuery('')
-                    setSelectedNav('Home')
+                    setSelectedNav('首页')
                     setScreen('recent')
                   }}
                 >
                   查看全部 <ChevronRight size={18} />
                 </button>
+                </div>
               </div>
               <div className="note-grid">
                 {filtered.length ? (
@@ -986,9 +1434,9 @@ function App(): React.JSX.Element {
                       }
                     >
                       <button className="note-card" onClick={() => openNote(note)}>
-                        <Thumb kind={note.kind} />
-                        <strong>{note.title}</strong>
-                        <span>{note.date}</span>
+                        <NotePageThumbnail note={note} />
+                        <strong className="note-card-title"><NoteFileIcon kind={note.kind} size={17} />{note.title}</strong>
+                        <span title={noteDateDetail(note)}>{noteDate(note)}</span>
                       </button>
                       <div className="note-actions">
                         <button
@@ -1005,37 +1453,35 @@ function App(): React.JSX.Element {
                           <MoreHorizontal size={17} />
                         </button>
                       </div>
-                      {cardMenu === note.id && (
-                        <div className="note-menu glass">
-                          <button onClick={() => openNoteOperation(note, '重命名笔记')}>
-                            重命名
-                          </button>
-                          <button
-                            onClick={() => {
-                              updateNote(note.id, { favorite: !note.favorite })
-                              setCardMenu(null)
-                            }}
-                          >
-                            {note.favorite ? '取消收藏' : '收藏'}
-                          </button>
-                          <button onClick={() => openNoteOperation(note, '移动笔记')}>
-                            移动到
-                          </button>
-                          <button
-                            onClick={() => {
-                              updateNote(note.id, { trashed: true })
-                              setCardMenu(null)
-                              setToast('已移入回收站 · 本次演示有效')
-                            }}
-                          >
-                            <Trash2 size={14} /> 移入回收站
-                          </button>
-                        </div>
-                      )}
+                      {cardMenu === note.id && renderNoteMenu(note)}
                     </div>
                   ))
+                ) : showGettingStarted ? (
+                  <div className="home-getting-started">
+                    <div>
+                      <h3>开始使用 LiftInk</h3>
+                      <p>写下第一篇笔记，或拖入 PDF、图片开始批注。编辑会自动保存到本机。</p>
+                    </div>
+                    <div className="home-getting-started-actions">
+                      <button className="home-getting-started-primary" onClick={createNote}>
+                        <PenLine size={17} /> 写第一篇笔记
+                      </button>
+                      <button onClick={() => openHomeQuick('import')}>
+                        <FileImage size={17} /> 选择 PDF 或图片
+                      </button>
+                      <button onClick={() => {
+                        setSettingsSection('files')
+                        setSelectedNav('设置')
+                        setScreen('settings')
+                      }}>
+                        <FolderOpen size={17} /> 已有资料库或备份
+                      </button>
+                    </div>
+                  </div>
                 ) : (
-                  <div className="empty-notes">未找到匹配笔记。试试其他关键词或目录。</div>
+                  <div className="empty-notes">
+                    {indexLoadError ? '无法读取笔记目录' : !notesReady ? '正在读取笔记目录…' : query.trim() || selectedFolder ? '未找到匹配的笔记' : '暂无最近笔记'}
+                  </div>
                 )}
               </div>
             </section>
@@ -1043,43 +1489,27 @@ function App(): React.JSX.Element {
               <section className="stats glass">
                 <div className="panel-title stats-heading">
                   <h2>书写概览</h2>
-                  <div className="stat-periods" aria-label="书写趋势时间范围">
-                    {([7, 30, 90] as const).map((period) => (
-                      <button
-                        key={period}
-                        className={chartPeriod === period ? 'selected' : ''}
-                        aria-pressed={chartPeriod === period}
-                        onClick={() => {
-                          setChartPeriod(period)
-                          setHoveredPoint(null)
-                        }}
-                      >
-                        {period} 天
-                      </button>
-                    ))}
-                  </div>
+                  {focusPeriodButtons}
                 </div>
                 <div className="stat-values">
                   <div>
                     <FileText size={29} />
                     <strong>
-                      126 <small>篇</small>
+                      {savedNotes.length} <small>篇</small>
                     </strong>
                     <span>笔记总数</span>
                   </div>
-                  <div>
-                    <Flame size={32} />
-                    <strong>
-                      12 <small>天</small>
-                    </strong>
-                    <span>连续书写</span>
-                  </div>
+                    <button className="stat-focus-link" aria-label="查看专注时间统计" onClick={() => setScreen('focus')}>
+                      <Flame size={30} />
+                      <strong>{formatDuration(focusMs)}</strong>
+                      <span>专注时间 <ChevronRight size={13} /></span>
+                    </button>
                   <div>
                     <PenLine size={32} />
                     <strong>
-                      842 <small>页</small>
+                      {savedNotes.reduce((total, note) => total + (note.pageCount ?? 0), 0)} <small>页</small>
                     </strong>
-                    <span>累计书写页数</span>
+                    <span>笔记页数</span>
                   </div>
                 </div>
                 <div className="chart">
@@ -1107,14 +1537,14 @@ function App(): React.JSX.Element {
                         stroke="#8066ff"
                         strokeWidth="2"
                         tabIndex={0}
-                        aria-label={`${chartDates[index]}，书写 ${chartValues[index]} 页`}
+                        aria-label={`${chartDates[index]}，专注 ${formatDuration(chartValues[index])}`}
                         onMouseEnter={() => setHoveredPoint(index)}
                         onMouseLeave={() => setHoveredPoint(null)}
                         onFocus={() => setHoveredPoint(index)}
                         onBlur={() => setHoveredPoint(null)}
                       >
                         <title>
-                          {chartDates[index]} · 书写 {chartValues[index]} 页
+                          {chartDates[index]} · 专注 {formatDuration(chartValues[index])}
                         </title>
                       </circle>
                     ))}
@@ -1124,16 +1554,11 @@ function App(): React.JSX.Element {
                       className="chart-tooltip"
                       style={{ left: `${(chartPoints[hoveredPoint].x / 520) * 100}%` }}
                     >
-                      {chartDates[hoveredPoint]} · 书写 {chartValues[hoveredPoint]} 页
+                      {chartDates[hoveredPoint]} · 专注 {formatDuration(chartValues[hoveredPoint])}
                     </div>
                   )}
                   <div className="chart-labels">
-                    {(chartPeriod === 7
-                      ? ['1/15', '1/17', '1/19', '1/21']
-                      : chartPeriod === 30
-                        ? ['12/22', '12/29', '1/5', '1/12', '1/19']
-                        : ['10/22', '11/12', '12/3', '12/24', '1/21']
-                    ).map((label) => (
+                    {chartDates.filter((_, index) => index % 2 === 0).map((label) => (
                       <span key={label}>{label}</span>
                     ))}
                   </div>
@@ -1170,7 +1595,7 @@ function App(): React.JSX.Element {
                     </p>
                     <div>
                       {activeKeywordNotes.map((note) => (
-                        <button key={note.id} onClick={() => openNote(note)}>
+                        <button key={note.id} onClick={() => openNote(note, pdfContents.get(note.id)?.some((text) => text.includes(activeKeyword.text)) ? activeKeyword.text : '')}>
                           <FileText size={16} /> {note.title} <ChevronRight size={16} />
                         </button>
                       ))}
@@ -1178,89 +1603,139 @@ function App(): React.JSX.Element {
                   </div>
                 ) : (
                   <div className="word-cloud" aria-label={`最近 ${keywordPeriod} 天关键词`}>
-                    {keywords
-                      .filter(
-                        (keyword) =>
-                          keyword.daysAgo <= keywordPeriod && keywordNotes(keyword).length
-                      )
-                      .map((keyword) => (
+                    {!keywords.length && <p className="keyword-cloud-empty">{pdfIndexing ? '正在读取 PDF 正文…' : '这个时间段还没有关键词'}</p>}
+                    {keywords.map((keyword, index) => {
+                      const [x, y, size] = keywordSlots[index]
+                      return (
                         <button
                           key={keyword.text}
-                          className={`word ${keyword.tone}`}
+                          className={`word ${index < 2 ? 'core' : index < 5 ? 'secondary' : 'auxiliary'}`}
                           style={{
-                            left: `${keyword.x}%`,
-                            top: `${keyword.y}%`,
-                            fontSize: keyword.size
+                            left: `${x}%`, top: `${y}%`, fontSize: size
                           }}
-                          title={`出现 ${keyword.relatedTitles.length * 3} 次 · 关联 ${keywordNotes(keyword).length} 篇笔记 · 最近记录于 ${keyword.latest}`}
+                          title={`出现 ${keyword.count} 次 · 关联 ${keyword.noteIds.length} 篇笔记 · 最近记录于 ${new Date(keyword.latest).toLocaleDateString('zh-CN')}`}
                           onClick={() => setActiveKeyword(keyword)}
+                          onContextMenu={(event) => {
+                            event.preventDefault()
+                            setKeywordToBlock(keyword.text)
+                          }}
                         >
                           {keyword.text}
                         </button>
-                      ))}
+                      )
+                    })}
                   </div>
                 )}
-                <div className="keyword-footnote">点击关键词，回顾相关笔记</div>
+                <div className="keyword-footnote">点击查看相关笔记 · 右键屏蔽关键词</div>
               </section>
             </div>
           </div>
-        ) : screen === 'recent' ? (
+        ) : screen === 'focus' ? (
+          <section className="recent-page" aria-label="专注时间统计">
+            <div className="recent-page-top"><button className="back-link" onClick={() => setScreen('home')}><ChevronLeft size={18} /> 返回首页</button>{focusPeriodButtons}</div>
+            <div className="recent-page-heading"><div><h1>专注时间</h1><p>近 {chartPeriod} 天 · 笔记累计专注时间前 10 名</p></div><span>{formatDuration(focusMs)}</span></div>
+            <div className="recent-file-list">
+              {focusRanking.length ? <ol className="focus-ranking">{focusRanking.slice(0, 10).map(({ note, ms }, index) => (
+                <li key={note.id}><button className="recent-file-row" onClick={() => openNote(note)}>
+                  <span className="file-symbol">{index + 1}</span><span className="file-main"><strong>{note.title}</strong><small>{note.folder}</small></span><span>{formatDuration(ms)}</span>
+                </button></li>
+              ))}</ol> : <p className="recent-list-empty">这段时间还没有专注记录。</p>}
+            </div>
+          </section>
+        ) : screen === 'trash' ? (
+          <section className="recent-page" aria-label="回收站">
+            <div className="recent-page-heading">
+              <div><h1>回收站</h1><p>移入 30 天后自动清除。到期前可还原到原文件夹。</p></div>
+              <span>{notes.filter((note) => note.trashed).length} 篇笔记</span>
+            </div>
+            <div className="recent-file-list">
+              {notes.some((note) => note.trashed) ? (
+                <ul className="trash-list">
+                  {notes.filter((note) => note.trashed).map((note) => (
+                    <li className="trash-row" key={note.id}>
+                      <span className="file-symbol"><NoteFileIcon kind={note.kind} /></span>
+                      <span className="file-main">
+                        <strong>{note.title.trim() || '未命名笔记'}</strong>
+                        <small>原位置 · {note.folder}</small>
+                        {note.trashedAt !== undefined && <small>剩余 {Math.max(0, Math.ceil((note.trashedAt + TRASH_RETENTION_MS - Date.now()) / 86400000))} 天</small>}
+                      </span>
+                      <button
+                        className="recent-create"
+                        aria-label={`还原 ${note.title.trim() || '未命名笔记'}`}
+                        onClick={() => restoreNote(note.id)}
+                      >还原</button>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="recent-list-empty">回收站为空</p>}
+            </div>
+          </section>
+        ) : screen === 'recent' || screen === 'folder' || screen === 'favorites' ? (
           <RecentFilesView
+            layout={preferences.fileLayout}
+            favorites={screen === 'favorites'}
+            folder={screen === 'folder' ? selectedFolder ?? undefined : undefined}
+            subfolders={screen === 'folder' && selectedFolder ? folders.filter((path) =>
+              path.startsWith(`${selectedFolder} / `) && !path.slice(selectedFolder.length + 3).includes(' / ')
+            ) : []}
+            onOpenFolder={openFolder}
+            renderActions={(file) => {
+              const note = notes.find((entry) => entry.id === file.id)
+              return note && <>
+                <button className="recent-file-menu-toggle" aria-label={`${note.title} 更多操作`} aria-expanded={cardMenu === note.id} onClick={() => setCardMenu(cardMenu === note.id ? null : note.id)}>
+                  <MoreHorizontal size={18} />
+                </button>
+                {cardMenu === note.id && renderNoteMenu(note)}
+              </>
+            }}
             files={[
               ...notes
-                .filter(
-                  (note) =>
-                    !note.trashed &&
-                    (!selectedFolder ||
-                      note.folder === selectedFolder ||
-                      note.folder.startsWith(`${selectedFolder} / `))
-                )
-                .map((note) => ({
+                .filter((note) => !note.trashed && (screen !== 'folder' || note.folder === selectedFolder) && (screen !== 'favorites' || note.favorite))
+                .map((note): RecentFile => ({
                   id: note.id,
                   title: note.title,
-                  kind: 'note' as const,
+                  kind: note.kind === 'pdf' || note.kind === 'image' ? note.kind : 'note' as const,
                   folder: note.folder,
-                  date: note.date,
+                  date: noteDate(note),
+                  dateDetail: noteDateDetail(note),
                   summary: note.summary,
-                  favorite: note.favorite
+                  searchable: [...note.tags, ...(searchText.get(note.id) ?? [])],
+                  favorite: note.favorite,
+                  managed: true
                 })),
-              ...[...mockPdfs, ...importedFiles]
-                .filter(
-                  (file) =>
-                    !selectedFolder ||
-                    file.folder === selectedFolder ||
-                    file.folder.startsWith(`${selectedFolder} / `)
-                )
-                .map((file) => ({
-                  ...file,
-                  date: 'date' in file && typeof file.date === 'string' ? file.date : '1 月 16 日',
-                  favorite: false
-                }))
             ]}
             onBack={() => {
               setScreen('home')
               setSelectedFolder(null)
-              setSelectedNav('Home')
+              setSelectedNav('首页')
             }}
             onCreate={createNote}
-            onOpen={(file) => {
-              if (file.kind !== 'note') notifyDemo(`${file.title} · 内容预览尚未接入`)
-              else {
-                const note = notes.find((entry) => entry.id === file.id)
-                if (note) openNote(note)
-              }
+            onCreateMarkdown={createMarkdownNote}
+            onOpen={(file, term) => {
+              const note = notes.find((entry) => entry.id === file.id)
+              if (note) openNote(note, term && matchesNoteSearch(pdfContents.get(note.id) ?? [], term) ? term : '')
+              else setToast('这篇笔记已不存在')
             }}
           />
         ) : screen === 'tags' ? (
           <TagsView
-            notes={notes.filter((note) => !note.trashed)}
+            notes={libraryNotes.map((note) => ({ ...note, date: noteDate(note), searchable: searchText.get(note.id) }))}
+            catalog={tagCatalog}
+            onCreateTag={(tag) => setTagCatalog((current) => [...new Set([...current, tag])])}
+            onChangeTag={(from, to) => {
+              setTagCatalog((current) => [...new Set([...current.filter((tag) => tag !== from), ...(to ? [to] : [])])])
+              setNotes((current) => current.map((note) => note.tags.includes(from)
+                ? { ...note, tags: [...new Set(note.tags.flatMap((tag) => tag === from ? to ? [to] : [] : [tag]))], updatedAt: Date.now() }
+                : note))
+            }}
+            onSetNoteTags={(id, tags) => updateNote(id, { tags })}
             onBack={() => {
-              setSelectedNav('Home')
+              setSelectedNav('首页')
               setScreen('home')
             }}
-            onOpen={(id) => {
+            onOpen={(id, term) => {
               const note = notes.find((entry) => entry.id === id)
-              if (note) openNote(note)
+              if (note) openNote(note, term && matchesNoteSearch(pdfContents.get(note.id) ?? [], term) ? term : '')
             }}
           />
         ) : screen === 'agenda' ? (
@@ -1270,18 +1745,32 @@ function App(): React.JSX.Element {
             onBack={() => setScreen('home')}
             onSelectDate={(date) => {
               const [year, monthNumber, day] = date.split('-').map(Number)
-              setMonthOffset((year - 2025) * 12 + monthNumber - 1)
-              setSelectedDay(day)
+              selectCalendarDate(year * 12 + monthNumber - 1, day)
             }}
-            onToggle={(id) =>
-              setAgendaItems((items) =>
-                items.map((item) => (item.id === id ? { ...item, done: !item.done } : item))
-              )
-            }
+            onToggle={(id) => completeAgenda(id, !agendaItems.find((item) => item.id === id)?.done)}
+            onOpenNote={(item) => { if (item.noteId) openLinkedNote(item.noteId, item.id) }}
             onAdd={() => openAgendaForm()}
             onEdit={(item) => openAgendaForm(item)}
-            onDelete={(id) => setAgendaItems((items) => items.filter((item) => item.id !== id))}
+            onDelete={confirmAgendaDelete}
+            goals={<section className="agenda-timeline-panel agenda-goals" aria-label="目标">
+              <div className="agenda-panel-heading">
+                <h2>目标</h2>
+                <span>{goals.filter((goal) => goal.done).length} / {goals.length}</span>
+                <button className="agenda-add-goal" onClick={() => openGoalForm()}><Plus size={15} /> 新增目标</button>
+              </div>
+              <div className="agenda-goal-list">{goalRows(true)}</div>
+            </section>}
           />
+        ) : screen === 'settings' ? (
+          <LibrarySettings profile={profile} onProfile={setProfile} folders={folders} onFolder={changeFolder}
+            preferences={preferences} onPreferences={(patch) => setPreferences((current) => ({ ...current, ...patch }))}
+            initialSection={settingsSection} onTestInput={() => { setSettingsSection('devices'); setScreen('pen-poc') }}
+            onReset={() => setPreferences({})} lastBackup={lastBackup} lastSaved={lastSaved}
+            blockedKeywords={blockedKeywords} onUnblock={(word) => setBlockedKeywords((current) => current.filter((entry) => entry !== word))}
+            onBack={() => { setScreen('home'); setSelectedNav('首页') }}
+            onBackup={(toDirectory) => void backupLibrary(undefined, toDirectory)} onRestore={() => libraryInput.current?.click()}
+            onVaultOperation={(operation) => { void runVaultAction(operation) }}
+            onClean={() => void cleanLibrary()} busy={libraryBusy || !notesReady} switching={libraryBusy} />
         ) : screen === 'quick' ? (
           <QuickWorkspaceView
             key={`${quickKind}:${activeNoteId ?? 'new'}`}
@@ -1292,29 +1781,45 @@ function App(): React.JSX.Element {
               setActiveNoteId(null)
             }}
             onSave={saveQuickNote}
-            onImport={(files) => {
-              setImportedFiles((current) => [
-                ...files.map((file) => ({
-                  id: crypto.randomUUID(),
-                  title: file.name,
-                  kind: file.kind,
-                  folder: '未分类',
-                  summary: '本次会话导入的文件信息',
-                  date: '刚刚'
-                })),
-                ...current
-              ])
-              setScreen('recent')
-              setToast(`已添加 ${files.length} 个文件到最近文件 · 本次会话有效`)
-            }}
+            onFocusTime={addFocusTime}
+            importBusy={newNoteBusy}
+            onImport={(files) => void createNoteFromFile(files)}
           />
         ) : screen === 'pen-poc' ? (
-          <PenInputPocView onBack={() => setScreen('editor')} />
+          <PenInputPocView onBack={() => setScreen('settings')} />
+        ) : activeNote?.kind === 'markdown' ? (
+          <MarkdownNoteEditor key={activeNote.id} note={activeNote} folders={folders}
+            tagCatalog={[...new Set([...tagCatalog, ...notes.flatMap((item) => item.tags)])]}
+            onTagsChange={(tags) => updateNote(activeNote.id, { tags })} onCreateTag={(tag) => setTagCatalog((current) => [...new Set([...current, tag])])}
+            onBack={() => { setScreen(editorReturn); setActiveNoteId(null) }}
+            onTitleChange={(title) => updateNote(activeNote.id, { title })}
+            onFolderChange={(folder) => updateNote(activeNote.id, { folder })}
+            saveDraft={draftNote?.id === activeNote.id ? (document) => persistDraft(activeNote, document) : undefined}
+            onDocumentSaved={updateDocumentStats} onFocusTime={addFocusTime}
+          />
         ) : activeNote ? (
           <LiveNoteEditorView
             key={activeNote.id}
             note={activeNote}
             folders={folders}
+            otherNotes={notes.filter((entry) => entry.id !== activeNote.id && !entry.trashed )}
+            preferences={preferences}
+            onBrushPreferences={(patch) => setPreferences((current) => ({ ...current, ...patch }))}
+            tagCatalog={[...new Set([...tagCatalog, ...notes.flatMap((item) => item.tags)])]}
+            onTagsChange={(tags) => updateNote(activeNote.id, { tags })} onCreateTag={(tag) => setTagCatalog((current) => [...new Set([...current, tag])])}
+            renderCompanion={(id, close) => {
+              const companion = notes.find((entry) => entry.id === id && !entry.trashed)
+              if (!companion) return <p>来源笔记已不存在</p>
+              const activation = { active: focusNoteId === id, onActivate: () => setFocusNoteId(id), onFocusTime: addFocusTime }
+              return companion.workspace ? <QuickWorkspaceView key={id} kind={companion.workspace} initialNote={companion}
+                onBack={close} onSave={(title, kind, summary, draft) => saveQuickNote(title, kind, summary, draft, id, true)}
+                importBusy={false} onImport={() => undefined} {...activation} />
+                : <MarkdownNoteEditor key={id} note={companion} folders={folders} onBack={close}
+                  tagCatalog={[...new Set([...tagCatalog, ...notes.flatMap((item) => item.tags)])]}
+                  onTagsChange={(tags) => updateNote(id, { tags })} onCreateTag={(tag) => setTagCatalog((current) => [...new Set([...current, tag])])}
+                  onTitleChange={(title) => updateNote(id, { title })} onFolderChange={(folder) => updateNote(id, { folder })}
+                  onDocumentSaved={updateDocumentStats} {...activation} />
+            }}
             onBack={() => {
               setNotes((current) =>
                 current.map((note) =>
@@ -1328,7 +1833,17 @@ function App(): React.JSX.Element {
             }}
             onTitleChange={(title) => updateNote(activeNote.id, { title })}
             onFolderChange={(folder) => updateNote(activeNote.id, { folder })}
-            onOpenInputPoc={() => setScreen('pen-poc')}
+            saveDraft={draftNote?.id === activeNote.id ? (document) => persistDraft(activeNote, document) : undefined}
+            onDocumentSaved={updateDocumentStats}
+            onFocusTime={addFocusTime}
+            initialPdfQuery={initialPdfQuery}
+            initialCountdown={agendaItems.find((item) => item.id === activeAgendaId)?.minutes}
+            onCountdownComplete={activeAgendaId && agendaItems.find((item) => item.id === activeAgendaId)?.minutes
+              ? () => { completeAgenda(activeAgendaId, true); setToast('限时日程已完成') } : undefined}
+            onPdfTextChanged={(id) => { indexedPdfVersions.current.delete(id) }}
+            onActivate={setFocusNoteId}
+            focusNoteId={focusNoteId}
+            onChangeOtherNote={updateNote}
           />
         ) : null}
       </main>
@@ -1346,65 +1861,68 @@ function App(): React.JSX.Element {
             <button
               aria-label="回到今天"
               className="today-button"
-              onClick={() => {
-                setMonthOffset(0)
-                setSelectedDay(21)
-              }}
+              onClick={() => { const today = new Date(); selectCalendarDate(calendarMonth(today), today.getDate()) }}
             >
               <CalendarDays size={15} /> 今天
             </button>
-            <strong>
+            <strong key={monthOffset} className={monthDirection ? 'calendar-month-label' : ''}>
               {month.getFullYear()} 年 {month.getMonth() + 1} 月
             </strong>
             <div className="calendar-arrows">
               <button
                 aria-label="上一月"
-                onClick={() => {
-                  setMonthOffset((v) => v - 1)
-                  setSelectedDay(1)
-                }}
+                onClick={() => selectCalendarDate(monthOffset - 1, 1)}
               >
                 <ChevronLeft size={18} />
               </button>
               <button
                 aria-label="下一月"
-                onClick={() => {
-                  setMonthOffset((v) => v + 1)
-                  setSelectedDay(1)
-                }}
+                onClick={() => selectCalendarDate(monthOffset + 1, 1)}
               >
                 <ChevronRight size={18} />
               </button>
             </div>
           </div>
-          <div className="calendar-grid">
-            {['一', '二', '三', '四', '五', '六', '日'].map((d) => (
-              <span className="weekday" key={d}>
-                {d}
-              </span>
-            ))}
-            {Array.from({ length: firstWeekday }, (_, i) => (
-              <span key={`blank-${i}`} />
-            ))}
-            {Array.from({ length: days }, (_, i) => (
-              <button
-                key={i}
-                className={selectedDay === i + 1 ? 'selected-day' : ''}
-                onClick={() => setSelectedDay(i + 1)}
-              >
-                {i + 1}
-              </button>
-            ))}
+          <div
+            className="calendar-frame"
+            style={{ '--calendar-rows': 1 + Math.ceil((firstWeekday + days) / 7) } as React.CSSProperties}
+          >
+            <div key={monthOffset} className="calendar-grid" data-month-direction={monthDirection ?? undefined}>
+              {['一', '二', '三', '四', '五', '六', '日'].map((d) => (
+                <span className="weekday" key={d}>
+                  {d}
+                </span>
+              ))}
+              {Array.from({ length: firstWeekday }, (_, i) => (
+                <span key={`blank-${i}`} />
+              ))}
+              {Array.from({ length: days }, (_, i) => {
+                const planned = agendaItems.some((item) => item.date === dayKey(new Date(month.getFullYear(), month.getMonth(), i + 1)))
+                return (
+                <button
+                  key={i}
+                  className={selectedDay === i + 1 ? 'selected-day' : ''}
+                  title={planned ? '有日程' : undefined}
+                  aria-pressed={selectedDay === i + 1}
+                  onClick={() => setSelectedDay(i + 1)}
+                >
+                  {i + 1}{planned && <i className="agenda-date-dot" aria-label="有日程" />}
+                </button>
+              )})}
+            </div>
           </div>
           <div className="schedule">
             <div className="section-title">
               <h2>
-                {selectedDay === 21 && monthOffset === 0
+                {selectedDate === dayKey(new Date())
                   ? '今日日程'
                   : `${month.getMonth() + 1} 月 ${selectedDay} 日日程`}{' '}
                 <span className="count">{dayAgenda.length}</span>
               </h2>
               <div className="schedule-actions">
+                <button aria-label="新增日程" onClick={() => openAgendaForm()}>
+                  <Plus size={23} />
+                </button>
                 <button
                   aria-label="查看全部日程"
                   title="查看全部日程"
@@ -1412,73 +1930,96 @@ function App(): React.JSX.Element {
                 >
                   <MoreHorizontal size={21} />
                 </button>
-                <button aria-label="新增日程" onClick={() => openAgendaForm()}>
-                  <Plus size={23} />
-                </button>
               </div>
             </div>
-            {dayAgenda.length ? (
-              dayAgenda.map((item) => (
-                <div className={`agenda-item ${item.done ? 'done' : ''}`} key={item.id}>
-                  <i style={{ background: item.color }} />
-                  <button
-                    className="agenda-main"
-                    aria-label={`${item.done ? '标记未完成' : '完成'} ${item.title}`}
-                    onClick={() =>
-                      setAgendaItems((items) =>
-                        items.map((entry) =>
-                          entry.id === item.id ? { ...entry, done: !entry.done } : entry
+            <div key={selectedDate} className="agenda-day-items date-enter">
+              {dayAgenda.length ? (
+                dayAgenda.map((item) => (
+                  <div className={`agenda-item ${item.done ? 'done' : ''}`} key={item.id}>
+                    <i style={{ background: item.color }} />
+                    <button
+                      className="agenda-main"
+                      aria-label={`${item.done ? '标记未完成' : '完成'} ${item.title}`}
+                      onClick={() =>
+                        setAgendaItems((items) =>
+                          items.map((entry) =>
+                            entry.id === item.id ? { ...entry, done: !entry.done } : entry
+                          )
                         )
-                      )
-                    }
-                  >
-                    <span>{item.time}</span>
-                    <b>{item.title}</b>
-                  </button>
-                  <button
-                    className="agenda-edit"
-                    aria-label={`修改 ${item.title}`}
-                    onClick={() => openAgendaForm(item)}
-                  >
-                    ⋯
-                  </button>
-                  <button
-                    className="agenda-delete"
-                    aria-label={`删除 ${item.title}`}
-                    onClick={() =>
-                      setAgendaItems((items) => items.filter((entry) => entry.id !== item.id))
-                    }
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))
-            ) : (
-              <p className="empty-day">这一天暂无日程</p>
-            )}
+                      }
+                    >
+                      <span>{item.time || '全天'}</span>
+                      <b>{item.title}</b>
+                    </button>
+                    <button
+                      className="agenda-edit"
+                      aria-label={`修改 ${item.title}`}
+                      onClick={() => openAgendaForm(item)}
+                    >
+                      ⋯
+                    </button>
+                    <button
+                      className="agenda-delete"
+                      aria-label={`删除 ${item.title}`}
+                      onClick={() => confirmAgendaDelete(item.id)}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <p className="empty-day">这一天暂无日程</p>
+              )}
+            </div>
           </div>
           <div className="goals">
             <div className="section-title">
               <h2>目标</h2>
-              <span>{goals.filter(Boolean).length} / 3</span>
+              <span>{goals.filter((goal) => goal.done).length} / {goals.length}</span>
+              <button aria-label="新增目标" onClick={() => openGoalForm()}><Plus size={18} /></button>
             </div>
             <div className="progress">
-              <i style={{ width: `${(goals.filter(Boolean).length / 3) * 100}%` }} />
+              <i style={{ width: `${goals.length ? goals.filter((goal) => goal.done).length / goals.length * 100 : 0}%` }} />
             </div>
-            {['完成项目方案初稿', '整理课程笔记', '阅读 2 本书'].map((g, i) => (
-              <button
-                className="goal"
-                key={g}
-                onClick={() => setGoals((v) => v.map((x, j) => (j === i ? !x : x)))}
-              >
-                <span className={goals[i] ? 'checked' : ''}>{goals[i] && <Check size={17} />}</span>
-                {g}
-              </button>
-            ))}
+            {goalRows(false, goals.slice(0, 3))}
+            {goals.length > 3 && (
+              <details className="home-goals-more" open={showAllGoals} onToggle={(event) => setShowAllGoals(event.currentTarget.open)}>
+                <summary><ChevronDown size={14} /> 其余 {goals.length - 3} 项</summary>
+                <div>{goalRows(false, goals.slice(3))}</div>
+              </details>
+            )}
           </div>
         </section>
       )}
 
+      <Dialog.Root open={!!folderAction} onOpenChange={(open) => { if (!open) setFolderAction(null) }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          {folderAction && <Dialog.Content className="dialog-content glass folder-action-dialog" onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            const trigger = folderActionTrigger.current
+            if (trigger?.isConnected) trigger.focus()
+            else addFolderButton.current?.focus()
+          }}>
+            <form onSubmit={(event) => { event.preventDefault(); submitFolderAction(folderAction) }}>
+              <Dialog.Title>{folderAction.kind === 'rename' ? '重命名文件夹' : folderAction.kind === 'delete' ? '删除文件夹' : folderAction.parent ? '新建子文件夹' : '新建文件夹'}</Dialog.Title>
+              <Dialog.Description>{folderAction.kind === 'delete'
+                ? `「${folderAction.path}」及其子文件夹将被删除，里面的笔记会移至「${parentFolder(folderAction.path) || '未分类'}」。`
+                : `位置：${folderAction.kind === 'create' ? folderAction.parent || '文件目录' : parentFolder(folderAction.path) || '文件目录'}`}</Dialog.Description>
+              {folderAction.kind !== 'delete' && <label className="form-field">文件夹名称
+                <input autoFocus value={folderName} maxLength={80} onChange={(event) => { setFolderName(event.target.value); setFolderError('') }} />
+              </label>}
+              {folderError && <p role="alert" className="folder-delete">{folderError}</p>}
+              <div className="folder-dialog-actions">
+                <Dialog.Close type="button" className="folder-dialog-cancel">取消</Dialog.Close>
+                <button type="submit" className={folderAction.kind === 'delete' ? 'form-submit folder-confirm-delete' : 'form-submit'}>
+                  {folderAction.kind === 'delete' ? '确认删除' : folderAction.kind === 'rename' ? '保存名称' : '创建文件夹'}
+                </button>
+              </div>
+            </form>
+          </Dialog.Content>}
+        </Dialog.Portal>
+      </Dialog.Root>
       <Dialog.Root
         open={!!modal}
         onOpenChange={(open) => {
@@ -1491,14 +2032,27 @@ function App(): React.JSX.Element {
             <Dialog.Close className="dialog-close" aria-label="关闭">
               <X size={22} />
             </Dialog.Close>
-            {modal === '重命名笔记' && operationNoteId ? (
+            {modal === '日程通知' ? (
+              <><Dialog.Title>日程通知</Dialog.Title>
+                {!profile.reminders ? <p>日程提醒已在设置中关闭。</p> : (() => {
+                  const pending = agendaItems.filter((item) => !item.done && item.date === dayKey(new Date())).sort((a, b) => a.time.localeCompare(b.time))
+                  return pending.length ? <ul>{pending.map((item) => <li key={item.id}>{item.time || '全天'} · {item.title}</li>)}</ul> : <p>今天没有待完成的日程。</p>
+                })()}
+                <button className="primary-button" onClick={() => {
+                  const today = new Date()
+                  selectCalendarDate(calendarMonth(today), today.getDate())
+                  setModal(null)
+                  setScreen('agenda')
+                }}>查看今日日程</button>
+              </>
+            ) : modal === '重命名笔记' && operationNoteId ? (
               <form
                 onSubmit={(event) => {
                   event.preventDefault()
                   if (draftTitle.trim()) {
                     updateNote(operationNoteId, { title: draftTitle.trim() })
                     setModal(null)
-                    setToast('笔记已重命名 · 本次演示有效')
+                    setToast('笔记已重命名')
                   }
                 }}
               >
@@ -1541,16 +2095,48 @@ function App(): React.JSX.Element {
                   移动到此处
                 </button>
               </form>
+            ) : modal === '删除日程' || modal === '删除目标' ? (
+              <>
+                <Dialog.Title>{modal}</Dialog.Title>
+                <p>确定删除「{modal === '删除日程' ? pendingAgendaDelete?.title : goalDraft.title}」？</p>
+                <div className="dialog-options">
+                  <button onClick={() => setModal(null)}>取消</button>
+                  <button onClick={() => {
+                    if (modal === '删除日程') setAgendaItems((current) => current.filter((item) => item.id !== pendingAgendaDelete?.id))
+                    else setGoals((current) => current.filter((goal) => goal.id !== goalDraft.id))
+                    setModal(null)
+                  }}>确认删除</button>
+                </div>
+              </>
+            ) : modal === '新增目标' || modal === '编辑目标' ? (
+              <form onSubmit={(event) => {
+                event.preventDefault()
+                const title = goalDraft.title.trim()
+                if (!title) return
+                setGoals((current) => goalDraft.id
+                  ? current.map((goal) => goal.id === goalDraft.id ? { ...goal, title, noteId: goalDraft.noteId || undefined } : goal)
+                  : [...current, { id: crypto.randomUUID(), title, done: false, noteId: goalDraft.noteId || undefined }])
+                setModal(null)
+              }}>
+                <Dialog.Title>{modal}</Dialog.Title>
+                <label className="form-field">目标名称<input autoFocus required maxLength={100} value={goalDraft.title} onChange={(event) => setGoalDraft((draft) => ({ ...draft, title: event.target.value }))} /></label>
+                <label className="form-field">关联笔记<select value={goalDraft.noteId} onChange={(event) => setGoalDraft((draft) => ({ ...draft, noteId: event.target.value }))}>
+                  <option value="">不关联</option>{libraryNotes.map((note) => <option key={note.id} value={note.id}>{note.title}</option>)}
+                </select></label>
+                <button className="form-submit" type="submit">保存目标</button>
+              </form>
             ) : modal === '新增日程' || modal === '修改日程' ? (
               <form
                 onSubmit={(event) => {
                   event.preventDefault()
                   if (!agendaDraft.title.trim()) return
+                  const links = { noteId: agendaDraft.noteId || undefined, goalId: agendaDraft.goalId || undefined,
+                    minutes: agendaDraft.noteId && agendaDraft.minutes ? Number(agendaDraft.minutes) : undefined }
                   if (agendaDraft.id)
                     setAgendaItems((items) =>
                       items.map((item) =>
                         item.id === agendaDraft.id
-                          ? { ...item, time: agendaDraft.time, title: agendaDraft.title.trim() }
+                          ? { ...item, ...links, time: agendaDraft.time, title: agendaDraft.title.trim() }
                           : item
                       )
                     )
@@ -1562,6 +2148,7 @@ function App(): React.JSX.Element {
                         date: selectedDate,
                         time: agendaDraft.time,
                         title: agendaDraft.title.trim(),
+                        ...links,
                         color: '#8a75e8',
                         done: false
                       }
@@ -1572,14 +2159,19 @@ function App(): React.JSX.Element {
                 <Dialog.Title>{modal}</Dialog.Title>
                 <label className="form-field">
                   时间
-                  <input
+                  <select aria-label="日程时间类型" value={agendaDraft.time ? 'timed' : 'all-day'} onChange={(event) => setAgendaDraft((draft) => ({ ...draft, time: event.target.value === 'all-day' ? '' : '09:00' }))}>
+                    <option value="all-day">全天</option>
+                    <option value="timed">指定时间</option>
+                  </select>
+                  {agendaDraft.time && <input
+                    aria-label="具体时间"
                     type="time"
                     value={agendaDraft.time}
                     onChange={(event) =>
                       setAgendaDraft((draft) => ({ ...draft, time: event.target.value }))
                     }
                     required
-                  />
+                  />}
                 </label>
                 <label className="form-field">
                   标题
@@ -1590,9 +2182,19 @@ function App(): React.JSX.Element {
                       setAgendaDraft((draft) => ({ ...draft, title: event.target.value }))
                     }
                     placeholder="输入日程内容"
+                    maxLength={100}
                     required
                   />
                 </label>
+                <label className="form-field">关联笔记<select value={agendaDraft.noteId} onChange={(event) => setAgendaDraft((draft) => ({ ...draft, noteId: event.target.value, minutes: '' }))}>
+                  <option value="">不关联</option>{libraryNotes.map((note) => <option key={note.id} value={note.id}>{note.title}</option>)}
+                </select></label>
+                <label className="form-field">关联目标<select value={agendaDraft.goalId} onChange={(event) => setAgendaDraft((draft) => ({ ...draft, goalId: event.target.value }))}>
+                  <option value="">不关联</option>{goals.map((goal) => <option key={goal.id} value={goal.id}>{goal.title}</option>)}
+                </select></label>
+                {libraryNotes.some((note) => note.id === agendaDraft.noteId && !note.workspace && note.kind !== 'markdown') &&
+                  <label className="form-field">限时分钟数（倒计时结束后完成日程）<input type="number" min="1" max="180" value={agendaDraft.minutes}
+                    onChange={(event) => setAgendaDraft((draft) => ({ ...draft, minutes: event.target.value }))} /></label>}
                 <button className="form-submit" type="submit">
                   {agendaDraft.id ? '保存修改' : '添加日程'}
                 </button>
@@ -1613,9 +2215,43 @@ function App(): React.JSX.Element {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
-      {toast && (
+      <Dialog.Root open={vaultBusy}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content" onEscapeKeyDown={(event) => event.preventDefault()} onPointerDownOutside={(event) => event.preventDefault()}>
+            <Dialog.Title>正在处理资料库</Dialog.Title>
+            <Dialog.Description>请选择所需文件夹，复制与校验完成后将继续。</Dialog.Description>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+      <Dialog.Root open={keywordToBlock !== null} onOpenChange={(open) => { if (!open) setKeywordToBlock(null) }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content">
+            <Dialog.Title>屏蔽关键词</Dialog.Title>
+            <Dialog.Description>屏蔽「{keywordToBlock}」后，可在「设置 → 通用」恢复显示。</Dialog.Description>
+            <div className="dialog-options">
+              <Dialog.Close asChild><button type="button">取消</button></Dialog.Close>
+              <button type="button" onClick={() => {
+                if (!keywordToBlock) return
+                setBlockedKeywords((current) => [...new Set([...current, keywordToBlock])])
+                setKeywordToBlock(null)
+              }}>不再显示此词</button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+      {homeDropActive && screen === 'home' && (
+        <div className="home-pdf-drop" aria-hidden="true"><FileText size={28} />松开以导入 PDF 或图片</div>
+      )}
+      {(toast || trashUndoId || pdfImportStatus) && (
         <div className="toast" role="status">
-          {toast}
+          {indexSaveError || indexLoadError
+            ? toast || '笔记目录保存失败'
+            : pdfImportStatus || (trashUndoId ? '已移入回收站' : toast)}
+          {trashUndoId && (
+            <button onClick={() => restoreNote(trashUndoId)}>撤销移入回收站</button>
+          )}
           {indexSaveError && (
             <button
               onClick={() =>

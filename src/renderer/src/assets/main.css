@@ -123,7 +123,9 @@ input:focus-visible {
 .folder-item svg:first-child {
   color: #7d86af;
 }
-.settings {
+.nav-footer {
+  display: grid;
+  gap: 4px;
   margin-top: auto;
 }
 .glass {
@@ -405,8 +407,10 @@ input:focus-visible {
 }
 .more-wrap {
   position: relative;
-  display: none;
+  display: block;
 }
+.more-wrap .more-button { width: 44px; height: 100%; }
+.more-menu .compact-action { display: none; }
 .more-menu {
   position: absolute;
   right: 0;
@@ -452,6 +456,7 @@ input:focus-visible {
 .note-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
   gap: 20px;
   height: calc(100% - 42px);
 }
@@ -625,7 +630,7 @@ input:focus-visible {
   gap: 5px;
   margin: 13px 4px;
 }
-.stat-values > div {
+.stat-values > :is(div, button) {
   display: grid;
   grid-template-columns: auto auto;
   align-items: center;
@@ -755,6 +760,47 @@ input:focus-visible {
   place-items: center;
   color: #707895;
 }
+.home-getting-started {
+  grid-column: 1 / -1;
+  align-self: center;
+  display: grid;
+  gap: 14px;
+  padding: 12px clamp(12px, 2.1vw, 30px);
+  color: var(--ink-text);
+}
+.home-getting-started h3 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
+}
+.home-getting-started p {
+  margin: 0;
+  color: var(--ink-secondary);
+}
+.home-getting-started-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.home-getting-started-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 6px 11px;
+  border: 1px solid var(--ink-line);
+  border-radius: 8px;
+  color: inherit;
+  font-weight: 600;
+}
+.home-getting-started-actions button:hover {
+  border-color: var(--ink-accent);
+}
+.home-getting-started-actions .home-getting-started-primary {
+  border-color: var(--ink-cta-surface);
+  background: var(--ink-cta-surface);
+  color: white;
+}
 @media (max-width: 1500px) {
   .app-shell {
     grid-template-columns: 210px minmax(0, 1fr) 6px var(--schedule-width);
@@ -804,9 +850,10 @@ input:focus-visible {
   .quick-actions {
     height: 65px;
   }
-  .quick-actions > .quick-button:nth-of-type(n + 4) {
+  .quick-actions > .quick-button:nth-of-type(n + 4):not(.quick-button-markdown) {
     display: none;
   }
+  .more-menu .compact-action { display: block; }
   .more-wrap {
     display: block;
   }
@@ -883,6 +930,54 @@ input:focus-visible {
   height: auto;
   max-height: none;
 }
+.note-card .page-thumbnail {
+  flex: 1 1 0%;
+  min-height: 0;
+  background: #f0edf6;
+  border-color: #e7e1ed;
+  box-shadow: none;
+}
+.page-thumbnail img {
+  display: block;
+  position: absolute;
+  inset: 6px 8px;
+  width: calc(100% - 16px);
+  height: calc(100% - 12px);
+  object-fit: contain;
+}
+.thumbnail-paper {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  height: calc(100% - 12px);
+  max-width: calc(100% - 16px);
+  aspect-ratio: 750 / 980;
+  overflow: hidden;
+  background: white;
+  border: 1px solid #e9e4ed;
+  border-radius: 4px;
+  padding: 8px 7px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.note-tile { min-height: 0; }
+.goal > b { font-weight: inherit; }
+.view-home .middle-column { overflow-y: auto; }
+.view-home .middle-column .goals { flex: none; margin-top: 14px; padding: 11px 0 4px; }
+.view-home .goals .progress { height: 6px; margin: 8px 0 7px; }
+.view-home .goals .goal { min-height: 27px; gap: 9px; margin: 1px 0; padding: 2px 0; }
+.view-home .goals .goal > span { width: 17px; height: 17px; }
+.view-home .goals .goal > span svg { width: 13px; }
+.view-home .goals .goal > b { overflow: hidden; text-overflow: ellipsis; }
+.home-goals-more { margin-top: 4px; }
+.home-goals-more summary { display: flex; align-items: center; gap: 4px; width: max-content; cursor: pointer; color: var(--ink-muted); font-size: 12px; }
+.home-goals-more summary::-webkit-details-marker { display: none; }
+.home-goals-more[open] summary svg { transform: rotate(180deg); }
+.home-goals-more > div { max-height: 110px; overflow-y: auto; }
 .note-card strong {
   flex: none;
   margin-top: 6px;

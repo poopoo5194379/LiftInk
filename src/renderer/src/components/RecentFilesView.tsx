@@ -1,5 +1,7 @@
+import { matchesNoteSearch } from '../editor/pdfLibrary'
 import { useMemo, useState } from 'react'
-import { ChevronLeft, FileImage, FileText, PenLine, Plus, Search, Star } from 'lucide-react'
+import { ChevronLeft, Folder, Plus, Search, Star } from 'lucide-react'
+import NoteFileIcon from './NoteFileIcon'
 
 export type RecentFile = {
   id: string
@@ -7,22 +9,39 @@ export type RecentFile = {
   kind: 'note' | 'pdf' | 'image'
   folder: string
   date: string
+  dateDetail?: string
   summary: string
   favorite: boolean
+  managed?: boolean
+  searchable?: string[]
 }
 
 type Props = {
   files: RecentFile[]
   onBack: () => void
-  onOpen: (file: RecentFile) => void
+  onOpen: (file: RecentFile, query: string) => void
   onCreate: () => void
+  onCreateMarkdown?: () => void
+  folder?: string
+  favorites?: boolean
+  subfolders?: string[]
+  onOpenFolder?: (folder: string) => void
+  renderActions?: (file: RecentFile) => React.ReactNode
+  layout?: 'list' | 'grid'
 }
 
 export default function RecentFilesView({
   files,
   onBack,
   onOpen,
-  onCreate
+  onCreate,
+  onCreateMarkdown,
+  folder,
+  favorites,
+  subfolders = [],
+  onOpenFolder,
+  renderActions,
+  layout = 'list'
 }: Props): React.JSX.Element {
   const [kind, setKind] = useState<'all' | 'note' | 'pdf' | 'image'>('all')
   const [query, setQuery] = useState('')
@@ -31,26 +50,30 @@ export default function RecentFilesView({
       files.filter(
         (file) =>
           (kind === 'all' || file.kind === kind) &&
-          `${file.title} ${file.folder} ${file.summary}`
-            .toLowerCase()
-            .includes(query.trim().toLowerCase())
+          matchesNoteSearch([file.title, file.folder, file.summary, ...(file.searchable ?? [])], query)
       ),
     [files, kind, query]
   )
+  const folderParts = folder?.split(' / ') ?? []
+  const parent = folderParts.slice(0, -1).join(' / ')
+  const searchLabel = folder ? '搜索当前目录' : favorites ? '搜索常用文件' : '搜索最近文件'
   return (
-    <section className="recent-page" aria-label="最近文件列表">
+    <section className={`recent-page file-layout-${layout}`} aria-label={folder ? '文件夹目录' : favorites ? '常用文件列表' : '最近文件列表'}>
       <div className="recent-page-top">
-        <button className="back-link" onClick={onBack}>
-          <ChevronLeft size={18} /> 返回首页
+        <button className="back-link" onClick={() => (parent ? onOpenFolder?.(parent) : onBack())}>
+          <ChevronLeft size={18} /> {parent ? '返回上一级' : '返回首页'}
         </button>
+        <div className="recent-heading-actions">
+        {onCreateMarkdown && <button className="recent-create recent-create-secondary" onClick={onCreateMarkdown}>新建 Markdown</button>}
         <button className="recent-create" onClick={onCreate}>
           <Plus size={17} /> 新建笔记
         </button>
+        </div>
       </div>
       <div className="recent-page-heading">
         <div>
-          <h1>最近文件</h1>
-          <p>接着上次停下的地方继续。</p>
+          <h1>{folderParts.at(-1) ?? (favorites ? '常用文件' : '最近文件')}</h1>
+          <p>{folder ?? (favorites ? '收藏的笔记和文件。' : '接着上次停下的地方继续。')}</p>
         </div>
         <span>{visible.length} 个文件</span>
       </div>
@@ -79,40 +102,63 @@ export default function RecentFilesView({
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索最近文件"
-            aria-label="搜索最近文件"
+            placeholder={searchLabel}
+            aria-label={searchLabel}
           />
         </label>
       </div>
       <div className="recent-file-list" role="list">
-        {visible.length ? (
-          visible.map((file) => (
-            <div role="listitem" key={file.id}>
-              <button className="recent-file-row" onClick={() => onOpen(file)}>
-                <span className={`file-symbol ${file.kind}`}>
-                  {file.kind === 'pdf' ? (
-                    <FileText size={24} />
-                  ) : file.kind === 'image' ? (
-                    <FileImage size={24} />
-                  ) : (
-                    <PenLine size={24} />
-                  )}
+        {!query.trim() &&
+          kind === 'all' &&
+          subfolders.map((path) => (
+            <div role="listitem" key={path}>
+              <button className="recent-file-row" onClick={() => onOpenFolder?.(path)}>
+                <span className="file-symbol">
+                  <Folder size={24} />
                 </span>
                 <span className="file-main">
-                  <strong>{file.title}</strong>
-                  <small>{file.summary}</small>
-                </span>
-                <span className="file-folder">{file.folder}</span>
-                <span className="file-date">{file.date}</span>
-                <span className="file-favorite">
-                  {file.favorite && <Star size={16} fill="currentColor" aria-label="已收藏" />}
+                  <strong>{path.split(' / ').at(-1)}</strong>
+                  <small>文件夹</small>
                 </span>
               </button>
             </div>
-          ))
-        ) : (
-          <div className="recent-list-empty">没有匹配的文件</div>
-        )}
+          ))}
+        {visible.length
+          ? visible.map((file) => (
+              <div
+                role="listitem"
+                key={file.id}
+                className={renderActions && file.managed ? 'recent-file-item' : undefined}
+              >
+                <button
+                  className="recent-file-row"
+                  draggable={!!renderActions && file.managed}
+                  onDragStart={(event) =>
+                    event.dataTransfer.setData('application/x-liftink-note', file.id)
+                  }
+                  onClick={() => onOpen(file, query)}
+                >
+                  <span className={`file-symbol ${file.kind}`}>
+                    <NoteFileIcon kind={file.kind} />
+                  </span>
+                  <span className="file-main">
+                    <strong>{file.title}</strong>
+                    <small>{file.summary}</small>
+                  </span>
+                  <span className="file-folder">{file.folder}</span>
+                  <span className="file-date" title={file.dateDetail}>{file.date}</span>
+                  <span className="file-favorite">
+                    {file.favorite && <Star size={16} fill="currentColor" aria-label="已收藏" />}
+                  </span>
+                </button>
+                {renderActions?.(file)}
+              </div>
+            ))
+          : (subfolders.length === 0 || query.trim() || kind !== 'all') && (
+              <div className="recent-list-empty">
+                {folder && !query.trim() && kind === 'all' ? '此文件夹暂无文件' : '没有匹配的文件'}
+              </div>
+            )}
       </div>
     </section>
   )
