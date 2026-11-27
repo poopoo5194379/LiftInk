@@ -4,6 +4,8 @@
 
 ## 近期改动与验证记录
 
+1.0.2 发布了 macOS 13+ 的 Apple 芯片和 Intel 预览包。两个 GitHub macOS 运行器均通过 DMG 校验、应用签名校验、打包应用启动、⌘ 快捷键、PDF 打开事件、关闭重开和对应架构的更新下载测试。Mac 预览包使用临时签名，未提交 Apple 公证。测试未覆盖 Finder 冷启动、物理数位板或真实机器的首次安装。 [构建记录](https://github.com/poopoo5194379/LiftInk/actions/runs/45998896706) · [发布页](https://github.com/poopoo5194379/LiftInk/releases/tag/v1.0.2)
+
 1.0.1 在设置新增「版本更新」。`check-release-updates.mjs` 在源码运行版和 Windows 解包版通过了新版识别、版本号排序、无可用安装包、请求失败后重试和 GitHub 下载地址校验。配置 `LIFTINK_TEST_RELEASE_VERSION=1.0.1` 可查询公开 Release，复验新版发现和已是最新版两条路径。
 
 11 月 27 日候选版下线录制、播放和转写入口，保留旧笔记的音频附件引用。用 `check-interaction-closures.mjs` 验证旧速记文字、原生备份恢复、笔记计数、思维导图启动恢复和全局搜索。用 `check-note-features.mjs` 验证扫描 OCR 保留到重启后并可复制当前页文字。
